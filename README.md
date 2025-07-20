@@ -148,7 +148,7 @@ We welcome contributions! Please see our contributing guidelines and:
 
 ## 📄 License
 
-This project is licensed under the MIT License and Apache 2.0 License - see the [LICENSE](LICENSE-MIT) file for details.
+This project is licensed under the MIT License and Apache 2.0 License - see the [MIT-LICENSE](LICENSE-MIT.MD) or [APACHE-LICENSE](LICENSE-APACHE.MD) file for details.
 
 **Built with ⚡️ in Rust by [Ata Sesli](https://github.com/ata-sesli)**
 
