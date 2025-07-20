@@ -37,7 +37,7 @@ impl Database {
 }
 
 pub struct Table {
-    table_name: String
+    table_name: String 
 }
 impl Table {
     pub fn new(db: &Database,table_name: Option<String>) -> Result<Self,DatabaseError>{

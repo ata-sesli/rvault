@@ -30,8 +30,13 @@ fn main() {
         Commands::Get { vault, platform, id } => {
             let db = storage::Database::new().unwrap();
             let table = Table::new(&db, vault).unwrap();
-            table.get_password(&db, platform, id);
+            let _ = table.get_password(&db, platform, id);
         }
+        Commands::Generate { length, special_characters } => {
+            let final_password = crypto::generate_password(length, special_characters);
+            clipboard::copy_text(final_password);
+            println!("Generated password has been copied! You can use it now.");
+        }   
         _ => todo!()
     }
 }
