@@ -1,12 +1,61 @@
-use crate::{clipboard::copy_text, error::DatabaseError};
+use std::fs;
+
+use crate::{clipboard::copy_text, error::{ConfigError, DatabaseError}};
 use rusqlite::Connection;
 use directories::ProjectDirs;
-use crate::account::Account;
-use arboard::Clipboard;
-use crate::crypto;
+use serde::{Deserialize,Serialize};
 
 const CURRENT_DB_PATH: &str = "RVAULT_CURRENT_DB_PATH";
 const CURRENT_VAULT_NAME: &str = "RVAULT_CURRENT_VAULT_NAME";
+
+#[derive(Serialize,Deserialize,Debug)]
+pub struct Config {
+    version: f32,
+    master_password_hash: Option<String>,
+    default_vault: Option<String>
+
+}
+impl Default for Config {
+    fn default() -> Self {
+        Config { version: 0.1, master_password_hash: None, default_vault: None }
+    }
+}
+impl Config {
+    pub fn new() -> Result<Self,ConfigError>{
+        if let Some(project_dirs) = ProjectDirs::from("io.github","ata-sesli","RVault"){
+            let config_dir = project_dirs.config_dir();
+            let _ = fs::create_dir_all(config_dir);
+            let config_file_path = config_dir.join("config.json");
+            if config_file_path.exists(){
+                println!("Config file found. Loading...");
+                let config_str = fs::read_to_string(config_file_path)?;
+                let config: Config = serde_json::from_str(&config_str)?;
+                Ok(config)
+            }
+            else {
+                println!("No config file found. Creating a default one...");
+                let config = Config::default();
+                Ok(config)
+            }
+        }
+        else {
+            Err(ConfigError::Path)
+        }
+    }
+    pub fn save_config(&self) -> Result<(),ConfigError> {
+        if let Some(project_dirs) = ProjectDirs::from("io.github","ata-sesli","RVault"){
+            let config_dir = project_dirs.config_dir();
+            let _ = fs::create_dir_all(config_dir);
+            let config_file_path = config_dir.join("config.json");
+            let json_string = serde_json::to_string(&self)?;
+            fs::write(config_file_path, json_string)?;
+            Ok(())
+        }
+        else {
+            Err(ConfigError::Path)
+        }
+    }
+}
 pub struct Database {
     connection: Connection
 }

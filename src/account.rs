@@ -1,14 +1,10 @@
-mod account {
-    
+pub struct VaultOwner {
+    name: String,
+    surname: String,
+    master_hash: String
 }
 pub struct Account {
     platform: String,
     user_id: String,
     passsword: String,
-}
-trait CanEncrypt {
-    fn encrypt_password() -> String;
-}
-trait CanSave {
-    fn save_field();
 }
