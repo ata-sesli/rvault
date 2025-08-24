@@ -33,7 +33,7 @@ impl Config {
             let _ = fs::create_dir_all(config_dir);
             let config_file_path = config_dir.join("config.json");
             if config_file_path.exists(){
-                println!("Config file found. Loading...");
+                // println!("Config file found. Loading...");
                 let config_str = fs::read_to_string(config_file_path)?;
                 let config: Config = serde_json::from_str(&config_str)?;
                 Ok(config)
