@@ -174,4 +174,4 @@ This project is licensed under the MIT License and Apache 2.0 License - see the 
 
 **Built with ⚡️ in Rust by [Ata Sesli](https://github.com/ata-sesli)**
 
-*RVault: Because your passwords deserve better than
+*RVault: Because your passwords deserve better
