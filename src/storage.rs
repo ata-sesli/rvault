@@ -1,61 +1,18 @@
 use std::fs;
-
-use crate::{clipboard::copy_text, error::{ConfigError, DatabaseError}};
-use rusqlite::Connection;
+use crate::{
+    clipboard::copy_text,
+    crypto::{decrypt_with_key, encrypt_with_key},
+    error::DatabaseError,
+    vault::VaultEntry,
+};
+use argon2::{password_hash::SaltString, Argon2};
+use rusqlite::{Connection,params};
 use directories::ProjectDirs;
-use serde::{Deserialize,Serialize};
+use rand::rng;
 
 const CURRENT_DB_PATH: &str = "RVAULT_CURRENT_DB_PATH";
 const CURRENT_VAULT_NAME: &str = "RVAULT_CURRENT_VAULT_NAME";
 
-#[derive(Serialize,Deserialize,Debug)]
-pub struct Config {
-    version: f32,
-    master_password_hash: Option<String>,
-    default_vault: Option<String>
-
-}
-impl Default for Config {
-    fn default() -> Self {
-        Config { version: 0.1, master_password_hash: None, default_vault: None }
-    }
-}
-impl Config {
-    pub fn new() -> Result<Self,ConfigError>{
-        if let Some(project_dirs) = ProjectDirs::from("io.github","ata-sesli","RVault"){
-            let config_dir = project_dirs.config_dir();
-            let _ = fs::create_dir_all(config_dir);
-            let config_file_path = config_dir.join("config.json");
-            if config_file_path.exists(){
-                println!("Config file found. Loading...");
-                let config_str = fs::read_to_string(config_file_path)?;
-                let config: Config = serde_json::from_str(&config_str)?;
-                Ok(config)
-            }
-            else {
-                println!("No config file found. Creating a default one...");
-                let config = Config::default();
-                Ok(config)
-            }
-        }
-        else {
-            Err(ConfigError::Path)
-        }
-    }
-    pub fn save_config(&self) -> Result<(),ConfigError> {
-        if let Some(project_dirs) = ProjectDirs::from("io.github","ata-sesli","RVault"){
-            let config_dir = project_dirs.config_dir();
-            let _ = fs::create_dir_all(config_dir);
-            let config_file_path = config_dir.join("config.json");
-            let json_string = serde_json::to_string(&self)?;
-            fs::write(config_file_path, json_string)?;
-            Ok(())
-        }
-        else {
-            Err(ConfigError::Path)
-        }
-    }
-}
 pub struct Database {
     connection: Connection
 }
@@ -107,16 +64,15 @@ impl Table {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 platform TEXT NOT NULL,
                 user_id TEXT NOT NULL,
-                password TEXT NOT NULL
+                password TEXT NOT NULL,
+                nonce TEXT,
+                salt TEXT
                 )",
             full_table_name
         );
         match connection.execute(&query,[]){
-            Ok(updated) => {
-                println!("Table has been created successfully!");
-                unsafe {
-                    std::env::set_var(CURRENT_VAULT_NAME, "main");
-                }
+            Ok(_) => {
+                println!("Table has been reached successfully!");
                 Ok(Self {
                     table_name: full_table_name,
                 })
@@ -137,6 +93,9 @@ impl Table {
         let _ = db.connection.execute(&query, [platform.to_string(),user_id.to_string(),password.to_string()]);
         println!("Account {} in {} has been added successfully!",user_id,platform);
     }
+    /// Add an entry encrypted with the provided master password.
+    /// Ciphertext is stored in the `password` column; nonce and salt are stored alongside.
+    
     pub fn remove_entry(&self,db: &Database, platform: String, user_id: String){
         let query = format!(
             "DELETE FROM {}
@@ -147,10 +106,11 @@ impl Table {
         println!("Account {} in {} has been removed successfully!",user_id,platform);
     }
     pub fn get_password(&self,db: &Database, platform: String, user_id: String) -> Result<(),DatabaseError>{
+        // Legacy/plaintext path: keep behavior for existing rows
         let query: String = format!(
             "SELECT password FROM {}
-             WHERE platform = (?1) AND user_id = (?2)
-            ",&self.table_name
+             WHERE platform = (?1) AND user_id = (?2)",
+            &self.table_name
         );
         let password_result = db.connection.query_row(&query, [platform.to_string(),user_id.to_string()],
         |row| row.get::<_,String>(0));
@@ -169,7 +129,84 @@ impl Table {
                 Err(DatabaseError::from(e))
             }
         }
+    }
+   /// Adds an entry using the main Encryption Key to derive a unique key for this entry.
+    pub fn add_entry_with_key(&self, db: &Database, encryption_key: &[u8], platform: String, id_and_password: String) {
+        let (user_id, password) = id_and_password.split_once(':').unwrap();
         
+        // 1. Generate a new, unique salt for this specific entry.
+        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+
+        // 2. Derive a unique key for this entry from the main EK and the new salt.
+        let mut entry_key = [0u8; 32];
+        Argon2::default().hash_password_into(encryption_key, salt.as_ref().as_bytes(), &mut entry_key).unwrap();
+
+        // 3. Encrypt the data with the derived per-entry key.
+        let (ciphertext, nonce) = encrypt_with_key(&entry_key, password.as_bytes()).unwrap();
+        
+        let query = format!(
+            "INSERT INTO {} (platform, user_id, password, nonce, salt) VALUES (?1, ?2, ?3, ?4, ?5)",
+            &self.table_name
+        );
+        let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string()]);
+        println!("Encrypted account {} in {} has been added successfully!", user_id, platform);
+    }
+
+    /// Retrieves an entry by re-deriving its unique key from the main Encryption Key and the entry's salt.
+    pub fn get_password_with_key(&self, db: &Database, encryption_key: &[u8], platform: String, user_id: String) -> Result<(), DatabaseError> {
+        let query = format!("SELECT password, nonce, salt FROM {} WHERE platform = (?1) AND user_id = (?2)", &self.table_name);
+        
+        let row = db.connection.query_row(&query, [platform.to_string(), user_id.to_string()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        });
+
+        match row {
+            Ok((ciphertext, nonce, salt_str)) => {
+                // 1. Re-derive the exact same per-entry key using the fetched salt.
+                let salt = salt_str.as_bytes();
+                let mut entry_key = [0u8; 32];
+                Argon2::default().hash_password_into(encryption_key, salt, &mut entry_key).unwrap();
+
+                // 2. Decrypt with the derived key.
+                match decrypt_with_key(&entry_key, &ciphertext, &nonce) {
+                    Ok(plaintext) => {
+                        copy_text(plaintext);
+                        println!("Password has been copied! You can use it now.");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        eprintln!("Decryption failed: {}", e);
+                        Err(DatabaseError::from(rusqlite::Error::InvalidQuery))
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Database query failed: {}", e);
+                Err(DatabaseError::from(e))
+            }
+        }
+    }
+    pub fn list(&self, db: &Database) -> Result<Vec<VaultEntry>, DatabaseError> {
+        let query = format!(
+            "SELECT platform, user_id, password, salt, nonce FROM {}",
+            &self.table_name
+        );
+        let mut statement = db.connection.prepare(&query)?;
+        let rows = statement.query_map([], |row| {
+            Ok(VaultEntry {
+                platform: row.get(0)?,
+                user_id: row.get(1)?,
+                password: row.get(2)?,
+                salt: row.get(3)?,
+                nonce: row.get(4)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
     fn is_valid_identifier(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')

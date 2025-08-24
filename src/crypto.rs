@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use rand::seq::{IndexedRandom, SliceRandom};
-use chacha20poly1305::{aead::{Aead,AeadCore,KeyInit,OsRng}, ChaChaPoly1305,ChaCha20Poly1305};
-use argon2::{password_hash::{self, rand_core::Error, PasswordHash, PasswordHasher, SaltString}, Argon2};
+use chacha20poly1305::{aead::{Aead,AeadCore,KeyInit,OsRng},ChaCha20Poly1305, Nonce};
+use argon2::{password_hash::{self, PasswordHash, PasswordHasher, SaltString, PasswordVerifier}, Argon2};
 use base64::prelude::*;
 use base64::engine::general_purpose::STANDARD as Base64;
 #[derive(Debug,Clone,ValueEnum)]
@@ -17,13 +17,28 @@ pub enum Hash {
 }
 
 pub struct EncryptedData{
-    key: String,
-    nonce: String,
-    ciphertext: String
+    pub key: String,
+    pub nonce: String,
+    pub ciphertext: String
+}
+pub struct DerivedEncryptedData {
+    pub ciphertext: String,
+    pub nonce: String,
+    pub salt: String,
 }
 pub struct HashedData{
-    hash: String
+    pub hash: String
 }
+pub fn generate_key() -> String{
+    let ek = ChaCha20Poly1305::generate_key(&mut OsRng); // A 32-byte random key
+    let ek_b64 = Base64.encode(&ek);
+    ek_b64
+}
+pub fn generate_raw_key() -> [u8; 32] {
+    let key = ChaCha20Poly1305::generate_key(&mut OsRng);
+    key.into()
+}
+
 // &[u8] means binary sequence.
 pub fn hash_data(data:&[u8]) -> Result<HashedData,argon2::password_hash::Error>{
     let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
@@ -76,4 +91,34 @@ pub fn generate_password(length: u8,special_characters: bool) -> String{
     }
     password_chars.shuffle(&mut rng);
     password_chars.into_iter().collect::<String>()
+}
+pub fn encrypt_with_key(key: &[u8], data: &[u8]) -> Result<(String, String), String> {
+    let cipher = ChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut chacha20poly1305::aead::OsRng);
+    let ciphertext = cipher.encrypt(&nonce, data).map_err(|e| e.to_string())?;
+
+    Ok((
+        Base64.encode(&ciphertext),
+        Base64.encode(&nonce),
+    ))
+}
+pub fn decrypt_with_key(key: &[u8], ciphertext_b64: &str, nonce_b64: &str) -> Result<String, String> {
+    let ciphertext = Base64.decode(ciphertext_b64).map_err(|e| e.to_string())?;
+    let nonce_bytes = Base64.decode(nonce_b64).map_err(|e| e.to_string())?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let cipher = ChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
+    let plaintext = cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|e| e.to_string())?; 
+    String::from_utf8(plaintext).map_err(|e| e.to_string())
+}
+pub fn verify_password(password: &[u8], stored_hash: &str) -> bool {
+    // Attempt to parse the stored hash string
+    if let Ok(parsed_hash) = PasswordHash::new(stored_hash) {
+        // Verify the plaintext password against the parsed hash
+        Argon2::default()
+            .verify_password(password, &parsed_hash)
+            .is_ok() // Returns true if verification succeeds, false otherwise
+    } else {
+        // If the stored hash is invalid, verification fails
+        false
+    }
 }

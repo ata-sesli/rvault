@@ -65,5 +65,8 @@ pub enum Commands {
         path: String,
         #[arg(short,long)]
         encryption: Option<Encryption>
-    }
+    },
+    Unlock {},
+    Lock {},
+    Setup {}
 }
