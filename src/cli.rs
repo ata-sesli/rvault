@@ -66,7 +66,13 @@ pub enum Commands {
         #[arg(short,long)]
         encryption: Option<Encryption>
     },
+    /// Unlocks the vault in order to use it, prompts master password. It automatically locks after a certain amount of time.
+    /// Example Usage: rvault unlock
     Unlock {},
+    /// Locks the vault after using it. It automatically locks after a certain amount of time.
+    /// Example Usage: rvault lock
     Lock {},
+    /// Must run if user runs the app for the first time, it prompts and sets the master password.
+    /// Example Usage: rvault setup
     Setup {}
 }

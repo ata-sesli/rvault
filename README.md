@@ -16,12 +16,31 @@
 ## 🚀 Installation
 
 ```bash
-git clone https://github.com/yourusername/rvault.git
+git clone https://github.com/ata-sesli/rvault.git
 cd rvault
+# Option A: Install the binary to your Cargo bin (recommended)
+cargo install --path .
+
+# Option B: Build locally and run from target/
 cargo build --release
 ```
 
 ## 📖 Usage Examples
+
+### First-Time Setup
+```bash
+# Create your master password and keystore (run once)
+rvault setup
+```
+
+### Unlock / Lock the Vault
+```bash
+# Start a session (required for protected commands like create/add/get/remove)
+rvault unlock
+
+# When you’re done
+rvault lock
+```
 
 ### Create a New Vault
 ```bash
@@ -64,9 +83,12 @@ rvault generate --length 20 --special-characters
 # Remove an entry
 rvault remove instagram johndoe
 rvault remove --vault work github jane.doe
+```
 
-# Export vault for backup
-rvault export work_vault ./backup/
+### Vault Export (Coming Soon)
+```bash
+# Export vault for backup (planned)
+# rvault export work_vault ./backup/
 ```
 
 ### Clipboard Monitoring (Coming Soon)
