@@ -66,7 +66,8 @@ impl Table {
                 user_id TEXT NOT NULL,
                 password TEXT NOT NULL,
                 nonce TEXT,
-                salt TEXT
+                salt TEXT,
+                UNIQUE(platform, user_id)
                 )",
             full_table_name
         );
@@ -145,8 +146,13 @@ impl Table {
         let (ciphertext, nonce) = encrypt_with_key(&entry_key, password.as_bytes()).unwrap();
         
         let query = format!(
-            "INSERT INTO {} (platform, user_id, password, nonce, salt) VALUES (?1, ?2, ?3, ?4, ?5)",
-            &self.table_name
+            "INSERT INTO {} (platform, user_id, password, nonce, salt)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(platform, user_id) DO UPDATE SET
+             password = ?3,
+             nonce = ?4,
+             salt = ?5;",
+             &self.table_name
         );
         let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string()]);
         println!("Encrypted account {} in {} has been added successfully!", user_id, platform);
