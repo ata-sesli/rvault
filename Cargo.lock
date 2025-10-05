@@ -1009,7 +1009,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "rvault"
+name = "rvault-cli"
+version = "0.0.5"
+dependencies = [
+ "clap",
+ "rpassword",
+ "rustyline",
+ "rvault-core",
+]
+
+[[package]]
+name = "rvault-core"
 version = "0.0.5"
 dependencies = [
  "arboard",
@@ -1017,16 +1027,23 @@ dependencies = [
  "base64",
  "chacha20poly1305",
  "clap",
+ "crc32fast",
  "directories",
+ "memchr",
  "rand",
- "rpassword",
  "rusqlite",
- "rustyline",
  "serde",
  "serde_json",
  "thiserror",
  "toml",
  "zeroize",
+]
+
+[[package]]
+name = "rvault-gui"
+version = "0.0.5"
+dependencies = [
+ "rvault-core",
 ]
 
 [[package]]

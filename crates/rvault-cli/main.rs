@@ -1,20 +1,14 @@
-pub mod cli;
-pub mod crypto;
-pub mod storage;
-pub mod error;
-pub mod clipboard;
-pub mod vault;
-pub mod config;
-pub mod session;
-pub mod keystore;
-// pub mod keystore_bin;
-use cli::Cli;
-use clap::Parser;
-use storage::Database;
-use cli::Commands;
-use storage::Table;
+mod cli;
 
-use crate::keystore::keystore_path;
+use clap::Parser;
+use crate::cli::{Cli, Commands};
+
+// Import everything needed from the new library
+use rvault_core::{
+    clipboard, config, crypto, keystore, session, storage, vault,
+    storage::{Database, Table},
+};
+use rvault_core::keystore::keystore_path; // Special case import for path
 
 fn main() {
     let args = Cli::parse();

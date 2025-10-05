@@ -1,0 +1,29 @@
+[package]
+name = "rvault-cli"
+
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rvault"
+path = "main.rs"
+
+[dependencies]
+rvault-core = { path = "../rvault-core" }
+
+clap = { version = "4.5.41", features = ["derive"] }
+rpassword = "7.4.0"                                  
+rustyline = "16.0.0"                                
+
+[package.metadata.wix]
+upgrade-guid = "22823ED1-1376-4252-B220-FCFF406A2665"
+path-guid = "DC92DD14-F906-4C84-A8A7-CB873BD2D043"
+license = false
+eula = false
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

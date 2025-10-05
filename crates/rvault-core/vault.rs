@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{config::Config, crypto::{generate_key, hash_data, verify_password}, storage::{Database, Table}};
 use base64::prelude::*;
 use base64::engine::general_purpose::STANDARD as Base64;
+use crate::keystore::keystore_path;
 
 const KEYRING_SERVICE: &str = "RVault";
 const KEYRING_ACCOUNT: &str = "encryption_key"; // stable account name
@@ -23,7 +24,7 @@ impl Vault {
         if !crate::crypto::verify_password(master_password.as_bytes(), stored_master_hash) {
             return Err("Invalid master password".into());
         }
-        let path = super::keystore_path()?; // or reimplement helper here
+        let path = keystore_path()?; // or reimplement helper here
         crate::keystore::load_key_from_vault(master_password, &path)
     }
     fn encrypt_vault(){}
