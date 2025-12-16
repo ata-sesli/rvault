@@ -31,9 +31,6 @@ impl Database {
             else {
                 println!("Successfully created new database!");
             }
-            unsafe {
-                std::env::set_var(CURRENT_DB_PATH, final_path);
-            }
             Ok(Self { connection })
         }
         else {

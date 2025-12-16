@@ -27,6 +27,9 @@ impl Vault {
         let path = keystore_path()?; // or reimplement helper here
         crate::keystore::load_key_from_vault(master_password, &path)
     }
+    fn load_external_vault(vault: Vec<u8>){
+        
+    }
     fn encrypt_vault(){}
     fn encrypt_partial_vault(){}
     pub fn export_vault(){}

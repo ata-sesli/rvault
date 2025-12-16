@@ -35,7 +35,7 @@ fn main() {
 
             // create keystore file
             let path = keystore_path().unwrap();
-            keystore::create_key_vault(&master_password, &path, &mut config)
+            keystore::create_key_vault(&master_password, &path)
                 .map_err(|e| eprintln!("❌ Keystore create failed: {e}"))
                 .ok();
             return;

@@ -1,0 +1,102 @@
+// vault_list_view.slint
+import { ListView, ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+export struct VaultItem {
+    platform: string,
+    username: string,
+}
+
+component VaultRow inherits Rectangle {
+    in property <VaultItem> item;
+    callback copy-clicked;
+    callback edit-clicked;
+
+    height: 60px;
+    background: #1C1C1E;
+    
+    HorizontalBox {
+        padding: 10px;
+        spacing: 15px;
+        VerticalBox {
+            Text { text: root.item.platform; font-weight: 600; }
+            Text { text: root.item.username; color: #8E8E93; }
+        }
+        HorizontalBox { alignment: end; spacing: 20px;
+            Text { text: "📋"; font-size: 20px; touch1 := TouchArea { clicked => { root.copy-clicked() } } }
+            Text { text: "📝"; font-size: 20px; touch2 := TouchArea { clicked => { root.edit-clicked() } } }
+        }
+    }
+}
+
+export component VaultListView inherits Rectangle {
+    in-out property <[VaultItem]> vault-items: [
+        { platform: "GitHub", username: "rvault-user" },
+        { platform: "Netflix", username: "movie-lover" },
+        { platform: "Work DB", username: "admin_user_01" },
+        { platform: "Discord", username: "gamer_god" },
+        { platform: "Google", username: "rvault.enthusiast@gmail.com" },
+    ];
+
+    callback add-new-clicked();
+    callback copy-item(int);
+    callback edit-item(int);
+    
+    background: #000000;
+    
+    HorizontalBox {
+        // Sidebar
+        Rectangle {
+            width: 200px;
+            background: #1C1C1E;
+            padding: 10px;
+            VerticalBox {
+                spacing: 10px;
+                Text { text: "RVault"; font-size: 20px; font-weight: 700; padding: 10px; }
+                // This would be implemented with custom button components
+                Rectangle { background: #FFA500; border-radius: 5px; Text { text: "My Vaults"; padding: 10px; } }
+                Text { text: "Profile"; padding: 10px; }
+                Text { text: "Import Vault"; padding: 10px; }
+                Text { text: "Export Vault"; padding: 10px; }
+                VerticalBox { alignment: end; Text { text: "Settings"; padding: 10px; } }
+            }
+        }
+        
+        // Main Content
+        VerticalBox {
+            padding: 20px;
+            spacing: 15px;
+            HorizontalBox {
+                Text { text: "My Vaults"; font-size: 24px; font-weight: 700; }
+                HorizontalBox { alignment: end;
+                    TouchArea {
+                        height: 35px;
+                        clicked => { root.add-new-clicked() }
+                        HorizontalBox { padding: 10px; spacing: 5px;
+                            Text { text: "+"; vertical-alignment: center; }
+                            Text { text: "Add New"; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+            
+            // Header
+            HorizontalBox {
+                padding: 10px;
+                Text { text: "Platform"; font-weight: 600; color: #8E8E93; }
+                Text { text: "Username"; font-weight: 600; color: #8E8E93; horizontal-alignment: center; }
+                Text { text: "Actions"; font-weight: 600; color: #8E8E93; horizontal-alignment: right; }
+            }
+            
+            // List
+            ScrollView {
+                ListView {
+                    for item[i] in root.vault-items: VaultRow {
+                        item: item;
+                        copy-clicked => { root.copy-item(i) }
+                        edit-clicked => { root.edit-item(i) }
+                    }
+                }
+            }
+        }
+    }
+}

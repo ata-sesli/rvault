@@ -6,7 +6,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     let ui_handle = ui.as_weak();
 
-    ui.on_unlock(move |password| {
+    ui.on_unlock(move |password: slint::SharedString| {
+        let password = password.to_string();
         let ui = ui_handle.upgrade().unwrap();
         let config = config::Config::new().unwrap();
         if let Some(stored_hash) = &config.master_password_hash {

@@ -17,3 +17,7 @@ authors = ["Ata Sesli"]
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[profile.dev.package."*"]
+debug = 0           # Turn off debug info for all dependencies
+opt-level = 3       # Maximize optimization for dependencies (makes app run faster too)

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::{fs, path::Path};
-use crate::crypto::{decrypt_with_key, encrypt_with_key, generate_key,hash_data};
-use crate::config::Config;
+use crate::crypto::{decrypt_with_key, encrypt_with_key, generate_key};
 use argon2::{Algorithm, Params, Version};
 use argon2::Argon2;
 use base64::prelude::*;
@@ -65,7 +64,7 @@ fn derive_kek(
     Ok(key)
 }
 /// Creates a new, encrypted vault file containing a newly generated Master Encryption Key (MEK).
-pub fn create_key_vault(master_password: &str, path: &Path, config: &mut Config) -> Result<(), String> {
+pub fn create_key_vault(master_password: &str, path: &Path) -> Result<(), String> {
     // 1. Generate a new, random 32-byte Master Encryption Key (MEK). This is the key we will protect.
     let mek = generate_key();
     // 2) Derive KEK from master + raw 16-byte salt
@@ -96,12 +95,7 @@ pub fn create_key_vault(master_password: &str, path: &Path, config: &mut Config)
     }
 
     // actually write the keystore
-    std::fs::write(path, &out).map_err(|e| format!("write keystore: {e}"))?;
-
-    // 5. Save the hash of the master password to the config for quick verification later.
-    let hashed_data = hash_data(master_password.as_bytes()).map_err(|e| e.to_string())?;
-    config.master_password_hash = Some(hashed_data.hash);
-    config.save_config().map_err(|e| e.to_string())
+    std::fs::write(path, &out).map_err(|e| format!("write keystore: {e}"))
 }
 
 /// Loads and decrypts the Master Encryption Key (MEK) from the vault file.
