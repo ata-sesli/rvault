@@ -49,6 +49,16 @@ pub fn hash_data(data:&[u8]) -> Result<HashedData,argon2::password_hash::Error>{
     };
     Ok(hashed_data)
 }
+
+/// Derive a raw 32-byte encryption key from a password and salt using Argon2
+/// Unlike `hash_data`, this returns the raw output bytes suitable for encryption keys
+pub fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; 32], argon2::Error> {
+    let argon2 = Argon2::default();
+    let mut output_key = [0u8; 32];
+    argon2.hash_password_into(password, salt, &mut output_key)?;
+    Ok(output_key)
+}
+
 pub fn encrypt_data(data:&[u8]) -> Result<EncryptedData,chacha20poly1305::Error> {
     let key = ChaCha20Poly1305::generate_key(&mut OsRng);
     let cipher = ChaCha20Poly1305::new(&key);
