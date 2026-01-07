@@ -3,7 +3,7 @@ resolver = "3"
 members = [
 "crates/rvault-core",
 "crates/rvault-cli",
-"crates/rvault-gui", "crates/rvault-tui",
+"crates/rvault-tui",
 ]
 
 [workspace.package]
