@@ -5,7 +5,7 @@ use crate::crypto::Encryption;
 #[command(version,about = "Welcome to RVault!",author = "Ata Sesli")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 #[derive(Debug,Subcommand)]
 pub enum Commands {

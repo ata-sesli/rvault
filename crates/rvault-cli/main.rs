@@ -12,10 +12,19 @@ use rvault_core::keystore::keystore_path; // Special case import for path
 
 fn main() {
     let args = Cli::parse();
+    // If no command is provided, launch TUI
+    if args.command.is_none() {
+        if let Err(e) = rvault_tui::run() {
+            eprintln!("Application error: {}", e);
+        }
+        return;
+    }
+    let command = args.command.unwrap();
+
     let mut config = config::Config::new().unwrap();
     let stored_hash = config.master_password_hash.as_ref().unwrap();
     // The 'Setup' command is special and can be run at any time.
-    let is_protected_command = match args.command {
+    let is_protected_command = match &command {
         Commands::Setup {} => {
             if config.master_password_hash.is_some() {
                 println!("⚠️ RVault has already been set up. To reset, delete your config file.");
@@ -41,7 +50,7 @@ fn main() {
             return;
         }
         Commands::Generate { length, special_characters } => {
-            let final_password = crypto::generate_password(length, special_characters);
+            let final_password = crypto::generate_password(*length, *special_characters);
             clipboard::copy_text(final_password);
             println!("Generated password has been copied! You can use it now.");
             return;
@@ -90,25 +99,36 @@ fn main() {
         // This case should not be reached, but we handle it safely.
         return;
     };
-    match args.command {
+    match command {
         Commands::Create { vault_name } => {
             let db = storage::Database::new().unwrap();
             let _ = Table::new(&db, vault_name).unwrap();
+            println!("Storage created successfully!");
         }
         Commands::Add { vault, platform, id_and_password } => {
             let db = storage::Database::new().unwrap();
-            let table = Table::new(&db, vault).unwrap();
-            table.add_entry_with_key(&db,&ek ,platform, id_and_password);
+            if let Ok(table) = Table::new(&db, vault) {
+                let (user_id, _) = id_and_password.split_once(':').unwrap();
+                let user_id_owned = user_id.to_string();
+                table.add_entry_with_key(&db,&ek ,platform.clone(), id_and_password);
+                println!("Account {} in {} has been added successfully!", user_id_owned, platform);
+            }
         }
         Commands::Remove { vault, platform, id } => {
             let db = storage::Database::new().unwrap();
-            let table = Table::new(&db, vault).unwrap();
-            table.remove_entry(&db, platform, id);
+            if let Ok(table) = Table::new(&db, vault) {
+                 table.remove_entry(&db, platform.clone(), id.clone());
+                 println!("Account {} in {} has been removed successfully!", id, platform);
+            }
         }
         Commands::Get { vault, platform, id } => {
             let db = storage::Database::new().unwrap();
-            let table = Table::new(&db, vault).unwrap();
-            let _ = table.get_password_with_key(&db,&ek, platform, id);
+            if let Ok(table) = Table::new(&db, vault) {
+                match table.get_password_with_key(&db,&ek, platform, id) {
+                    Ok(_) => println!("Password has been copied! You can use it now."),
+                    Err(e) => eprintln!("Error: {}", e),
+                }
+            }
         }
         _ => todo!()
     }

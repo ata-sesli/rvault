@@ -25,12 +25,6 @@ impl Database {
             let final_path = database_dir.join("default_vault.sqlite");
             let db_exists = final_path.exists();
             let connection = Connection::open(&final_path)?;
-            if db_exists {
-                println!("Successfully opened existing database!");
-            }
-            else {
-                println!("Successfully created new database!");
-            }
             Ok(Self { connection })
         }
         else {
@@ -48,7 +42,6 @@ impl Table {
         let full_table_name = match table_name {
             Some(name) => {
                 if Self::is_valid_identifier(&name){
-                    println!("Error: Invalid table name '{}'", name);
                     return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(name)));
                 } else {
                     name
@@ -70,7 +63,6 @@ impl Table {
         );
         match connection.execute(&query,[]){
             Ok(_) => {
-                println!("Table has been reached successfully!");
                 Ok(Self {
                     table_name: full_table_name,
                 })
@@ -89,7 +81,6 @@ impl Table {
             ", &self.table_name
         );
         let _ = db.connection.execute(&query, [platform.to_string(),user_id.to_string(),password.to_string()]);
-        println!("Account {} in {} has been added successfully!",user_id,platform);
     }
     /// Add an entry encrypted with the provided master password.
     /// Ciphertext is stored in the `password` column; nonce and salt are stored alongside.
@@ -101,7 +92,6 @@ impl Table {
             ",&self.table_name
         );
         let _ = db.connection.execute(&query, [platform.to_string(),user_id.to_string()]);
-        println!("Account {} in {} has been removed successfully!",user_id,platform);
     }
     pub fn get_password(&self,db: &Database, platform: String, user_id: String) -> Result<(),DatabaseError>{
         // Legacy/plaintext path: keep behavior for existing rows
@@ -115,7 +105,6 @@ impl Table {
         match password_result {
             Ok(password) => {
                 let _ = copy_text(password);
-                println!("Password has been copied! You can use it now.");
                 Ok(())
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -152,11 +141,11 @@ impl Table {
              &self.table_name
         );
         let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string()]);
-        println!("Encrypted account {} in {} has been added successfully!", user_id, platform);
     }
 
-    /// Retrieves an entry by re-deriving its unique key from the main Encryption Key and the entry's salt.
-    pub fn get_password_with_key(&self, db: &Database, encryption_key: &[u8], platform: String, user_id: String) -> Result<(), DatabaseError> {
+    /// Retrieves the decrypted password for an entry.
+    /// Returns the plaintext password if successful.
+    pub fn retrieve_password_with_key(&self, db: &Database, encryption_key: &[u8], platform: String, user_id: String) -> Result<String, DatabaseError> {
         let query = format!("SELECT password, nonce, salt FROM {} WHERE platform = (?1) AND user_id = (?2)", &self.table_name);
         
         let row = db.connection.query_row(&query, [platform.to_string(), user_id.to_string()], |row| {
@@ -172,11 +161,7 @@ impl Table {
 
                 // 2. Decrypt with the derived key.
                 match decrypt_with_key(&entry_key, &ciphertext, &nonce) {
-                    Ok(plaintext) => {
-                        copy_text(plaintext);
-                        println!("Password has been copied! You can use it now.");
-                        Ok(())
-                    }
+                    Ok(plaintext) => Ok(plaintext),
                     Err(e) => {
                         eprintln!("Decryption failed: {}", e);
                         Err(DatabaseError::from(rusqlite::Error::InvalidQuery))
@@ -187,6 +172,18 @@ impl Table {
                 eprintln!("Database query failed: {}", e);
                 Err(DatabaseError::from(e))
             }
+        }
+    }
+
+    /// Retrieves an entry by re-deriving its unique key from the main Encryption Key and the entry's salt.
+    /// Copies the password to clipboard and prints success message.
+    pub fn get_password_with_key(&self, db: &Database, encryption_key: &[u8], platform: String, user_id: String) -> Result<(), DatabaseError> {
+        match self.retrieve_password_with_key(db, encryption_key, platform, user_id) {
+            Ok(plaintext) => {
+                copy_text(plaintext);
+                Ok(())
+            },
+            Err(e) => Err(e)
         }
     }
     pub fn list(&self, db: &Database) -> Result<Vec<VaultEntry>, DatabaseError> {

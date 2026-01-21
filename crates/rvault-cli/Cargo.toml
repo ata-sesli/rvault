@@ -13,6 +13,8 @@ path = "main.rs"
 
 [dependencies]
 rvault-core = { path = "../rvault-core" }
+rvault-tui = { path = "../rvault-tui" }
+
 
 clap = { version = "4.5.41", features = ["derive"] }
 rpassword = "7.4.0"                                  

@@ -7,3 +7,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+rvault-core = { path = "../rvault-core" }
+ratatui = "0.30.0"
+anyhow = "1.0.100"
+crossterm = "0.29.0"

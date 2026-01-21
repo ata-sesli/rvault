@@ -1,0 +1,259 @@
+use rvault_core::{
+    clipboard, config, crypto,
+    session::{self, get_key_from_session},
+    storage::{Database, Table},
+    vault::Vault,
+    keystore::{self, keystore_path},
+};
+use ratatui::widgets::ListState;
+use crossterm::event::{KeyCode, KeyEventKind};
+use std::io;
+
+pub enum SetupStage {
+    EnterPassword,
+    ConfirmPassword,
+}
+
+pub enum AppState {
+    Authentication(String), // Stores current password input
+    MainTable,
+    Generator,
+    Setup {
+        password: String,
+        confirm: String,
+        stage: SetupStage,
+        error: Option<String>,
+    },
+}
+
+pub struct App {
+    pub state: AppState,
+    pub items: Vec<(String, String)>, // (Platform, UserID)
+    pub list_state: ListState,
+    
+    // Generator state
+    pub gen_length: u8,
+    pub gen_special: bool,
+    
+    // Auth state
+    pub auth_error: Option<String>,
+}
+
+impl App {
+    pub fn new() -> Self {
+        let config = config::Config::new().unwrap_or_default();
+        let initial_state = if config.master_password_hash.is_some() {
+            AppState::Authentication(String::new())
+        } else {
+            AppState::Setup {
+                password: String::new(),
+                confirm: String::new(),
+                stage: SetupStage::EnterPassword,
+                error: None,
+            }
+        };
+
+        Self {
+            state: initial_state,
+            items: Vec::new(),
+            list_state: ListState::default(),
+            gen_length: 12,
+            gen_special: false,
+            auth_error: None,
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        match self.state {
+            AppState::MainTable => self.state = AppState::Generator,
+            AppState::Generator => self.state = AppState::MainTable,
+            _ => {}
+        }
+    }
+
+    pub fn check_session(&mut self) -> bool {
+        match get_key_from_session() {
+            Ok(_) => {
+                self.state = AppState::MainTable;
+                self.refresh_vault_list();
+                true
+            }
+            Err(_) => false
+        }
+    }
+
+    pub fn refresh_vault_list(&mut self) {
+        if let Ok(db) = Database::new() {
+            if let Ok(table) = Table::new(&db, None) {
+                if let Ok(entries) = table.list(&db) {
+                     self.items = entries.into_iter()
+                        .map(|e| (e.platform, e.user_id))
+                        .collect();
+                }
+            }
+        }
+    }
+
+    pub fn on_key(&mut self, key: crossterm::event::KeyEvent) -> io::Result<bool> {
+        if key.kind != KeyEventKind::Press {
+            return Ok(false);
+        }
+
+        let mut transition_to_main = false;
+        let mut transition_to_login = false;
+
+        match &mut self.state {
+            AppState::Authentication(input) => {
+                match key.code {
+                    KeyCode::Enter => {
+                         let config = config::Config::new().unwrap_or_default();
+                         if let Some(stored_hash) = &config.master_password_hash {
+                              match Vault::get_encryption_key(input, stored_hash) {
+                                 Ok(key) => {
+                                     if let Ok(token) = session::start_session(&key) {
+                                          let _ = session::write_current(&token);
+                                          transition_to_main = true;
+                                     } else {
+                                         self.auth_error = Some("Failed to start session".into());
+                                     }
+                                 }
+                                 Err(_) => {
+                                     self.auth_error = Some("Invalid Password".into());
+                                 }
+                              }
+                         } else {
+                              self.auth_error = Some("RVault not set up.".into());
+                         }
+                         input.clear();
+                    }
+                    KeyCode::Char(c) => input.push(c),
+                    KeyCode::Backspace => { input.pop(); },
+                    KeyCode::Esc => return Ok(true), // Signal to quit
+                    _ => {}
+                }
+            }
+            AppState::MainTable => {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+                    KeyCode::Tab => self.next_tab(),
+                    KeyCode::Down => {
+                        let i = match self.list_state.selected() {
+                            Some(i) => if i >= self.items.len().saturating_sub(1) { 0 } else { i + 1 },
+                            None => 0,
+                        };
+                        self.list_state.select(Some(i));
+                    }
+                    KeyCode::Up => {
+                        let i = match self.list_state.selected() {
+                            Some(i) => if i == 0 { self.items.len().saturating_sub(1) } else { i - 1 },
+                            None => 0,
+                        };
+                        self.list_state.select(Some(i));
+                    }
+                    KeyCode::Enter => {
+                        if let Some(i) = self.list_state.selected() {
+                            if let Some((platform, id)) = self.items.get(i) {
+                                 if let Ok(db) = Database::new() {
+                                    if let Ok(table) = Table::new(&db, None) {
+                                        if let Ok(ek) = get_key_from_session() {
+                                            if let Ok(plaintext) = table.retrieve_password_with_key(&db, &ek, platform.clone(), id.clone()) {
+                                                clipboard::copy_text(plaintext);
+                                            }
+                                        }
+                                    }
+                                 }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            AppState::Generator => {
+                 match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+                    KeyCode::Tab => self.next_tab(),
+                    KeyCode::Char('s') => self.gen_special = !self.gen_special,
+                    KeyCode::Left => if self.gen_length > 4 { self.gen_length -= 1 },
+                    KeyCode::Right => if self.gen_length < 64 { self.gen_length += 1 },
+                    KeyCode::Enter => {
+                         let pass = crypto::generate_password(self.gen_length, self.gen_special);
+                         clipboard::copy_text(pass);
+                    }
+                    _ => {}
+                 }
+            }
+            AppState::Setup { password, confirm, stage, error } => {
+                match key.code {
+                    KeyCode::Esc => return Ok(true),
+                    KeyCode::Enter => {
+                        match stage {
+                            SetupStage::EnterPassword => {
+                                if !password.is_empty() {
+                                     *stage = SetupStage::ConfirmPassword;
+                                     *error = None;
+                                }
+                            },
+                            SetupStage::ConfirmPassword => {
+                                if password == confirm {
+                                    // Setup Logic
+                                    let mut config = config::Config::new().unwrap_or_default();
+                                    match crypto::hash_data(password.as_bytes()) {
+                                        Ok(hashed) => {
+                                            config.master_password_hash = Some(hashed.hash);
+                                            if config.save_config().is_ok() {
+                                                if let Ok(path) = keystore_path() {
+                                                    let _ = keystore::create_key_vault(password, &path);
+                                                }
+                                                transition_to_login = true;
+                                            } else {
+                                                *error = Some("Failed to save config".into()); 
+                                            }
+                                        },
+                                        Err(e) => {
+                                             *error = Some(format!("Hash error: {}", e));
+                                        }
+                                    }
+                                } else {
+                                    *error = Some("Passwords do not match".into());
+                                    confirm.clear();
+                                    *stage = SetupStage::EnterPassword; // Reset to first stage or stay? Let's reset purely confirm or just clear confirm.
+                                    // Let's reset confirm but keep password for retry? Usually reset confirm is enough.
+                                    // But to be safe lets modify flow: stay in confirm but it's cleared.
+                                    // If user typed wrong first time, they can't see it.
+                                    // Better UX: Go back to start
+                                    password.clear();
+                                    *stage = SetupStage::EnterPassword;
+                                }
+                            }
+                        }
+                    },
+                    KeyCode::Backspace => {
+                        match stage {
+                            SetupStage::EnterPassword => { password.pop(); },
+                            SetupStage::ConfirmPassword => { confirm.pop(); },
+                        }
+                    },
+                    KeyCode::Char(c) => {
+                        match stage {
+                            SetupStage::EnterPassword => password.push(c),
+                            SetupStage::ConfirmPassword => confirm.push(c),
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        if transition_to_main {
+            self.state = AppState::MainTable;
+            self.refresh_vault_list();
+            self.auth_error = None;
+        }
+        
+        if transition_to_login {
+             self.state = AppState::Authentication(String::new());
+        }
+
+        Ok(false)
+    }
+}
