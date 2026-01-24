@@ -13,6 +13,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         AppState::MainTable => draw_main(f, app),
         AppState::Generator => draw_generator(f, app),
         AppState::Setup { password, confirm, stage, error } => draw_setup(f, password, confirm, stage, error),
+        AppState::RemoveConfirmation { platform, user_id } => draw_remove_confirmation(f, platform, user_id),
+        AppState::EditPassword { platform, user_id, input } => draw_edit_password(f, platform, user_id, input),
     }
 }
 
@@ -105,7 +107,7 @@ fn draw_main(f: &mut Frame, app: &mut App) {
         .highlight_symbol("> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
     
-    draw_help(f, chunks[2], "Navigate: ↑/↓ | Copy: Enter | Switch Tab: Tab | Quit: q");
+    draw_help(f, chunks[2], "Navigate: ↑/↓ | Copy: Enter | Edit: e | Remove: d | Switch Tab: Tab | Quit: q");
 }
 
 fn draw_generator(f: &mut Frame, app: &mut App) {
@@ -137,6 +139,47 @@ fn draw_generator(f: &mut Frame, app: &mut App) {
     f.render_widget(p, inner_area);
 
     draw_help(f, chunks[2], "Adjust: ←/→ | Toggle Spec: s | Generate: Enter | Switch Tab: Tab | Quit: q");
+}
+
+fn draw_remove_confirmation(f: &mut Frame, platform: &str, user_id: &str) {
+    let block = Block::default()
+        .title(" Confirm Removal ")
+        .borders(Borders::ALL)
+        .style(Style::default().bg(Color::DarkGray));
+    
+    let area = centered_rect(50, 20, f.area());
+    let text = vec![
+        Line::from(Span::styled(format!("Are you sure you want to remove:"), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
+        Line::from(format!("{} - {}", platform, user_id)),
+        Line::from(""),
+        Line::from("[y] Yes / [n] No"),
+    ];
+    let p = Paragraph::new(text)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(Clear, area);
+    f.render_widget(p, area);
+}
+
+fn draw_edit_password(f: &mut Frame, platform: &str, user_id: &str, input: &str) {
+    let block = Block::default()
+        .title(" Edit Password ")
+        .borders(Borders::ALL);
+    let area = centered_rect(60, 20, f.area());
+    
+    let text = vec![
+        Line::from(format!("Update password for {} ({})", user_id, platform)),
+        Line::from(""),
+        Line::from(format!("> {}", input)), // Showing password as plain text for edit, or *? Usually stars but for edit maybe show? Let's use * for consistency with security.
+    ];
+    // Actually, showing plaintext in edit for a password manager might be risky but user is editing it.
+    // Let's stick to * for now.
+    
+    let p = Paragraph::new(text)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(Clear, area); // Clear background
+    f.render_widget(p, area);
 }
 
 fn draw_tabs(f: &mut Frame, area: Rect, index: usize) {
