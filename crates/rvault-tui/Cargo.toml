@@ -6,6 +6,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[package.metadata.wix]
+upgrade-guid = "08D7A986-F23E-4C88-9523-B2B3301AD95F"
+path-guid = "FCA3F511-F9EE-4BE9-9230-E9AE3A2406EE"
+license = false
+eula = false
+
 [dependencies]
 rvault-core = { path = "../rvault-core" }
 ratatui = "0.30.0"

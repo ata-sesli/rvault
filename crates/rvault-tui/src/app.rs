@@ -14,6 +14,12 @@ pub enum SetupStage {
     ConfirmPassword,
 }
 
+pub enum AddEntryStage {
+    Platform,
+    UserId,
+    Password,
+}
+
 pub enum AppState {
     Authentication(String), // Stores current password input
     MainTable,
@@ -32,6 +38,12 @@ pub enum AppState {
         platform: String,
         user_id: String,
         input: String,
+    },
+    AddEntry {
+        platform: String,
+        user_id: String,
+        password: String,
+        stage: AddEntryStage,
     },
 }
 
@@ -143,6 +155,14 @@ impl App {
             }
             AppState::MainTable => {
                 match key.code {
+                     KeyCode::Char('a') => {
+                        self.state = AppState::AddEntry {
+                            platform: String::new(),
+                            user_id: String::new(),
+                            password: String::new(),
+                            stage: AddEntryStage::Platform,
+                        };
+                    }
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
                     KeyCode::Tab => self.next_tab(),
                     KeyCode::Down => {
@@ -289,7 +309,7 @@ impl App {
                 }
             }
             AppState::EditPassword { platform, user_id, input } => {
-                 match key.code {
+                match key.code {
                     KeyCode::Enter => {
                          if let Ok(db) = Database::new() {
                              if let Ok(table) = Table::new(&db, None) {
@@ -307,6 +327,68 @@ impl App {
                         transition_to_main = true;
                     }
                     _ => {}
+                }
+            }
+            AppState::AddEntry { platform, user_id, password, stage } => {
+                match key.code {
+                    KeyCode::Esc => transition_to_main = true,
+                    KeyCode::Enter => {
+                        match stage {
+                            AddEntryStage::Platform => {
+                                if !platform.is_empty() {
+                                    *stage = AddEntryStage::UserId;
+                                }
+                            }
+                            AddEntryStage::UserId => {
+                                if !user_id.is_empty() {
+                                    *stage = AddEntryStage::Password;
+                                }
+                            }
+                            AddEntryStage::Password => {
+                                if !password.is_empty() {
+                                    // Save the entry
+                                    if let Ok(db) = Database::new() {
+                                        if let Ok(table) = Table::new(&db, None) {
+                                            if let Ok(ek) = get_key_from_session() {
+                                                let id_pass = format!("{}:{}", user_id, password);
+                                                table.add_entry_with_key(&db, &ek, platform.clone(), id_pass);
+                                            }
+                                        }
+                                    }
+                                    transition_to_main = true;
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        match stage {
+                            AddEntryStage::Platform => { platform.pop(); },
+                            AddEntryStage::UserId => { user_id.pop(); },
+                            AddEntryStage::Password => { password.pop(); },
+                        }
+                    }
+                    KeyCode::Up => {
+                        match stage {
+                            AddEntryStage::Platform => {},
+                            AddEntryStage::UserId => *stage = AddEntryStage::Platform,
+                            AddEntryStage::Password => *stage = AddEntryStage::UserId,
+                        }
+                    }
+                    KeyCode::Down => {
+                         match stage {
+                            AddEntryStage::Platform => *stage = AddEntryStage::UserId,
+                            AddEntryStage::UserId => *stage = AddEntryStage::Password,
+                            AddEntryStage::Password => {},
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                         match stage {
+                            AddEntryStage::Platform => platform.push(c),
+                            AddEntryStage::UserId => user_id.push(c),
+                            AddEntryStage::Password => password.push(c),
+                        }
+                    }
+                     _ => {}
                 }
             }
         }
