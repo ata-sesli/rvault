@@ -20,6 +20,12 @@ pub struct VaultEntry {
     pub nonce: Option<String>,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub id: Option<i64>,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
 }
 impl Vault {
     pub fn get_encryption_key(master_password: &str, stored_master_hash: &str) -> Result<[u8; 32], String> {

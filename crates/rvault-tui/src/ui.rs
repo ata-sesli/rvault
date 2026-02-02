@@ -5,7 +5,8 @@ use ratatui::{
     widgets::{Block, Borders, BorderType, List, ListItem, ListState, Paragraph, Tabs, Clear},
     Frame,
 };
-use crate::app::{App, AppState, AddEntryStage, SetupStage};
+use crate::app::{App, AppState, AddEntryStage, SetupStage, SortMode};
+use rvault_core::vault::VaultEntry;
 
 #[derive(Clone)]
 pub struct Theme {
@@ -141,7 +142,36 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         AppState::EditPassword { platform, user_id, input } => draw_edit_password(f, platform, user_id, input, theme),
         AppState::AddEntry { platform, user_id, password, stage } => draw_add_entry(f, platform, user_id, password, stage, theme),
         AppState::ThemeSelection => draw_theme_selection(f, &app.themes, theme),
+        AppState::SortSelection => draw_sort_selection(f, &app.sort_mode, theme),
     }
+}
+
+fn draw_sort_selection(f: &mut Frame, current_mode: &SortMode, theme: &Theme) {
+    let area = centered_rect_fixed(40, 20, f.area());
+    draw_shadow(f, area);
+
+    let modes = SortMode::all();
+    let items: Vec<ListItem> = modes
+        .iter()
+        .map(|mode| {
+            let style = if mode == current_mode {
+                Style::default().bg(theme.accent).fg(theme.bg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            ListItem::new(Line::from(mode.name())).style(style)
+        })
+        .collect();
+    
+    let list = List::new(items)
+        .block(Block::default()
+            .title(" 🔃 Sort By ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme.accent))
+            .style(Style::default().bg(theme.surface).fg(theme.text))); 
+    
+    f.render_widget(list, area);
 }
 
 fn draw_theme_selection(f: &mut Frame, themes: &[Theme], current: &Theme) {
@@ -241,7 +271,7 @@ fn draw_setup(f: &mut Frame, password: &String, confirm: &String, stage: &SetupS
     f.render_widget(p, area);
 }
 
-fn draw_main(f: &mut Frame, items: &[(String, String, bool)], list_state: &mut ListState, error: &Option<String>, theme: &Theme) {
+fn draw_main(f: &mut Frame, items: &[VaultEntry], list_state: &mut ListState, error: &Option<String>, theme: &Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -272,14 +302,14 @@ fn draw_main(f: &mut Frame, items: &[(String, String, bool)], list_state: &mut L
 
     let list_items: Vec<ListItem> = items
         .iter()
-        .map(|(platform, id, pinned)| {
-            let pin_icon = if *pinned { "📌 " } else { "   " };
+        .map(|entry| {
+            let pin_icon = if entry.pinned { "📌 " } else { "   " };
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(pin_icon, Style::default().fg(theme.warning)),
-                    Span::styled(format!("{:<20}", platform), Style::default().fg(theme.text)),
+                    Span::styled(format!("{:<20}", entry.platform), Style::default().fg(theme.text)),
                     Span::styled(" │ ", Style::default().fg(theme.muted)),
-                    Span::styled(id, Style::default().fg(theme.text)),
+                    Span::styled(&entry.user_id, Style::default().fg(theme.text)),
                 ]),
             ])
         })
@@ -297,7 +327,7 @@ fn draw_main(f: &mut Frame, items: &[(String, String, bool)], list_state: &mut L
         
     f.render_stateful_widget(list, chunks[1], list_state);
     
-    draw_help(f, chunks[2], "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Edit: e | Delete: d | Switch Tab: Tab | Themes: t | Quit: q", theme);
+    draw_help(f, chunks[2], "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Edit: e | Delete: d | Switch Tab: Tab | Themes: t | Sort: S | Quit: q", theme);
 }
 
 fn draw_generator(f: &mut Frame, gen_length: u8, gen_special: bool, theme: &Theme) {

@@ -9,6 +9,7 @@ use argon2::{password_hash::SaltString, Argon2};
 use rusqlite::{Connection,params};
 use directories::ProjectDirs;
 use rand::rng;
+use chrono::Utc;
 
 const CURRENT_DB_PATH: &str = "RVAULT_CURRENT_DB_PATH";
 const CURRENT_VAULT_NAME: &str = "RVAULT_CURRENT_VAULT_NAME";
@@ -68,6 +69,14 @@ impl Table {
                 let migration = format!("ALTER TABLE {} ADD COLUMN pinned BOOLEAN DEFAULT FALSE", full_table_name);
                 // We ignore the error if column already exists (simplest migration strategy for SQLite here)
                 let _ = connection.execute(&migration, []);
+                
+                // Migration: Ensure created_at column exists
+                let migration2 = format!("ALTER TABLE {} ADD COLUMN created_at INTEGER DEFAULT 0", full_table_name);
+                let _ = connection.execute(&migration2, []);
+                
+                // Migration: Ensure updated_at column exists
+                let migration3 = format!("ALTER TABLE {} ADD COLUMN updated_at INTEGER DEFAULT 0", full_table_name);
+                let _ = connection.execute(&migration3, []);
                 
                 Ok(Self {
                     table_name: full_table_name,
@@ -136,17 +145,20 @@ impl Table {
 
         // 3. Encrypt the data with the derived per-entry key.
         let (ciphertext, nonce) = encrypt_with_key(&entry_key, password.as_bytes()).unwrap();
+
+        let now = Utc::now().timestamp();
         
         let query = format!(
-            "INSERT INTO {} (platform, user_id, password, nonce, salt, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, FALSE)
+            "INSERT INTO {} (platform, user_id, password, nonce, salt, pinned, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, FALSE, ?6, ?7)
              ON CONFLICT(platform, user_id) DO UPDATE SET
              password = ?3,
              nonce = ?4,
-             salt = ?5;",
+             salt = ?5,
+             updated_at = ?7;",
              &self.table_name
         );
-        let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string()]);
+        let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string(), now, now]);
     }
 
     pub fn toggle_pin(&self, db: &Database, platform: String, user_id: String) -> Result<bool, DatabaseError> {
@@ -214,18 +226,21 @@ impl Table {
     }
     pub fn list(&self, db: &Database) -> Result<Vec<VaultEntry>, DatabaseError> {
         let query = format!(
-            "SELECT platform, user_id, password, salt, nonce, pinned FROM {} ORDER BY pinned DESC, platform ASC",
+            "SELECT id, platform, user_id, password, salt, nonce, pinned, created_at, updated_at FROM {} ORDER BY pinned DESC, platform ASC",
             &self.table_name
         );
         let mut statement = db.connection.prepare(&query)?;
         let rows = statement.query_map([], |row| {
             Ok(VaultEntry {
-                platform: row.get(0)?,
-                user_id: row.get(1)?,
-                password: row.get(2)?,
-                salt: row.get(3)?,
-                nonce: row.get(4)?,
-                pinned: row.get(5)?,
+                id: row.get(0)?,
+                platform: row.get(1)?,
+                user_id: row.get(2)?,
+                password: row.get(3)?,
+                salt: row.get(4)?,
+                nonce: row.get(5)?,
+                pinned: row.get(6)?,
+                created_at: row.get(7).unwrap_or(0),
+                updated_at: row.get(8).unwrap_or(0),
             })
         })?;
 

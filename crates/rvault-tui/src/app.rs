@@ -2,7 +2,8 @@ use rvault_core::{
     clipboard, config, crypto,
     session::{self, get_key_from_session},
     storage::{Database, Table},
-    vault::Vault,
+
+    vault::{Vault, VaultEntry},
     keystore::{self, keystore_path},
 };
 use ratatui::widgets::ListState;
@@ -19,6 +20,40 @@ pub enum AddEntryStage {
     Platform,
     UserId,
     Password,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    TimeAsc,
+    TimeDesc,
+    PlatformAsc,
+    PlatformDesc,
+    UserIdAsc,
+    UserIdDesc,
+}
+
+impl SortMode {
+    pub fn all() -> Vec<SortMode> {
+        vec![
+            SortMode::TimeDesc,
+            SortMode::TimeAsc,
+            SortMode::PlatformAsc,
+            SortMode::PlatformDesc,
+            SortMode::UserIdAsc,
+            SortMode::UserIdDesc,
+        ]
+    }
+    
+    pub fn name(&self) -> &'static str {
+        match self {
+            SortMode::TimeAsc => "Time (Oldest First)",
+            SortMode::TimeDesc => "Time (Newest First)",
+            SortMode::PlatformAsc => "Platform (A-Z)",
+            SortMode::PlatformDesc => "Platform (Z-A)",
+            SortMode::UserIdAsc => "User ID (A-Z)",
+            SortMode::UserIdDesc => "User ID (Z-A)",
+        }
+    }
 }
 
 pub enum AppState {
@@ -47,11 +82,12 @@ pub enum AppState {
         stage: AddEntryStage,
     },
     ThemeSelection,
+    SortSelection,
 }
 
 pub struct App {
     pub state: AppState,
-    pub items: Vec<(String, String, bool)>, // (Platform, UserID, Pinned)
+    pub items: Vec<VaultEntry>,
     pub list_state: ListState,
     
     // Generator state
@@ -64,6 +100,9 @@ pub struct App {
     // Theme
     pub themes: Vec<Theme>,
     pub current_theme: Theme,
+    
+    // Sorting
+    pub sort_mode: SortMode,
 }
 
 impl App {
@@ -110,6 +149,7 @@ impl App {
             auth_error: None,
             themes,
             current_theme,
+            sort_mode: SortMode::PlatformAsc,
         }
     }
 
@@ -136,12 +176,50 @@ impl App {
         if let Ok(db) = Database::new() {
             if let Ok(table) = Table::new(&db, None) {
                 if let Ok(entries) = table.list(&db) {
-                     self.items = entries.into_iter()
-                        .map(|e| (e.platform, e.user_id, e.pinned))
-                        .collect();
+                     self.items = entries;
+                     self.sort_items();
                 }
             }
         }
+    }
+
+    pub fn sort_items(&mut self) {
+        // Separate pinned and unpinned
+        let (pinned, mut unpinned): (Vec<_>, Vec<_>) = self.items.drain(..).partition(|e| e.pinned);
+        
+        // Sort unpinned based on sort_mode
+        match self.sort_mode {
+            SortMode::TimeAsc => {
+                unpinned.sort_by(|a, b| {
+                    let a_time = if a.updated_at > 0 { a.updated_at } else if a.created_at > 0 { a.created_at } else { a.id.unwrap_or(0) };
+                    let b_time = if b.updated_at > 0 { b.updated_at } else if b.created_at > 0 { b.created_at } else { b.id.unwrap_or(0) };
+                    a_time.cmp(&b_time)
+                });
+            }
+            SortMode::TimeDesc => {
+                unpinned.sort_by(|a, b| {
+                    let a_time = if a.updated_at > 0 { a.updated_at } else if a.created_at > 0 { a.created_at } else { a.id.unwrap_or(0) };
+                    let b_time = if b.updated_at > 0 { b.updated_at } else if b.created_at > 0 { b.created_at } else { b.id.unwrap_or(0) };
+                    b_time.cmp(&a_time)
+                });
+            }
+            SortMode::PlatformAsc => {
+                unpinned.sort_by(|a, b| a.platform.to_lowercase().cmp(&b.platform.to_lowercase()));
+            }
+            SortMode::PlatformDesc => {
+                unpinned.sort_by(|a, b| b.platform.to_lowercase().cmp(&a.platform.to_lowercase()));
+            }
+            SortMode::UserIdAsc => {
+                unpinned.sort_by(|a, b| a.user_id.to_lowercase().cmp(&b.user_id.to_lowercase()));
+            }
+            SortMode::UserIdDesc => {
+                unpinned.sort_by(|a, b| b.user_id.to_lowercase().cmp(&a.user_id.to_lowercase()));
+            }
+        }
+        
+        // Merge: pinned first, then sorted unpinned
+        self.items = pinned;
+        self.items.extend(unpinned);
     }
 
     pub fn on_key(&mut self, key: crossterm::event::KeyEvent) -> io::Result<bool> {
@@ -210,16 +288,15 @@ impl App {
                     }
                     KeyCode::Char('p') => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id, _)) = self.items.get(i) {
+                            if let Some(entry) = self.items.get(i) {
                                 if let Ok(db) = Database::new() {
                                     if let Ok(table) = Table::new(&db, None) {
-                                        match table.toggle_pin(&db, platform.clone(), id.clone()) {
+                                        match table.toggle_pin(&db, entry.platform.clone(), entry.user_id.clone()) {
                                             Ok(_) => {
                                                 self.refresh_vault_list();
                                                 self.auth_error = None;
                                             },
                                             Err(_) => {
-                                                // Assuming error is mostly due to cap or db error
                                                 self.auth_error = Some("Pin limit reached (max 10)".into());
                                             }
                                         }
@@ -230,20 +307,20 @@ impl App {
                     }
                     KeyCode::Char('d') => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id, _)) = self.items.get(i) {
+                            if let Some(entry) = self.items.get(i) {
                                 self.state = AppState::RemoveConfirmation {
-                                    platform: platform.clone(),
-                                    user_id: id.clone(),
+                                    platform: entry.platform.clone(),
+                                    user_id: entry.user_id.clone(),
                                 };
                             }
                         }
                     }
                      KeyCode::Char('e') => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id, _)) = self.items.get(i) {
+                            if let Some(entry) = self.items.get(i) {
                                 self.state = AppState::EditPassword {
-                                    platform: platform.clone(),
-                                    user_id: id.clone(),
+                                    platform: entry.platform.clone(),
+                                    user_id: entry.user_id.clone(),
                                     input: String::new(),
                                 };
                             }
@@ -251,11 +328,11 @@ impl App {
                     }
                     KeyCode::Enter => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id, _)) = self.items.get(i) {
+                            if let Some(entry) = self.items.get(i) {
                                  if let Ok(db) = Database::new() {
                                     if let Ok(table) = Table::new(&db, None) {
                                         if let Ok(ek) = get_key_from_session() {
-                                            if let Ok(plaintext) = table.retrieve_password_with_key(&db, &ek, platform.clone(), id.clone()) {
+                                            if let Ok(plaintext) = table.retrieve_password_with_key(&db, &ek, entry.platform.clone(), entry.user_id.clone()) {
                                                 clipboard::copy_text(plaintext);
                                             }
                                         }
@@ -266,6 +343,37 @@ impl App {
                     }
                     KeyCode::Char('t') => {
                         self.state = AppState::ThemeSelection;
+                    }
+                    KeyCode::Char('S') => {
+                        self.state = AppState::SortSelection;
+                    }
+                    _ => {}
+                }
+            }
+            AppState::SortSelection => {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => {
+                        self.state = AppState::MainTable;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let modes = SortMode::all();
+                        if let Some(pos) = modes.iter().position(|&m| m == self.sort_mode) {
+                            let next = (pos + 1) % modes.len();
+                            self.sort_mode = modes[next];
+                            self.sort_items();
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let modes = SortMode::all();
+                        if let Some(pos) = modes.iter().position(|&m| m == self.sort_mode) {
+                            let prev = if pos == 0 { modes.len() - 1 } else { pos - 1 };
+                            self.sort_mode = modes[prev];
+                            self.sort_items();
+                        }
+                    }
+                    KeyCode::Enter => {
+                        self.sort_items();
+                        self.state = AppState::MainTable;
                     }
                     _ => {}
                 }
