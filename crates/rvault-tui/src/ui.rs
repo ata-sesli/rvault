@@ -126,7 +126,7 @@ impl Theme {
     }
 
     pub fn default() -> Self {
-        Self::catppuccin()
+        Self::gruvbox()
     }
 }
 
@@ -163,6 +163,14 @@ fn draw_sort_selection(f: &mut Frame, current_mode: &SortMode, theme: &Theme) {
         })
         .collect();
     
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
     let list = List::new(items)
         .block(Block::default()
             .title(" 🔃 Sort By ")
@@ -171,7 +179,13 @@ fn draw_sort_selection(f: &mut Frame, current_mode: &SortMode, theme: &Theme) {
             .border_style(Style::default().fg(theme.accent))
             .style(Style::default().bg(theme.surface).fg(theme.text))); 
     
-    f.render_widget(list, area);
+    f.render_widget(list, chunks[0]);
+
+    let help_text = Paragraph::new("Press <Enter> to sort")
+        .style(Style::default().fg(theme.muted))
+        .alignment(ratatui::layout::Alignment::Center);
+    
+    f.render_widget(help_text, chunks[1]);
 }
 
 fn draw_theme_selection(f: &mut Frame, themes: &[Theme], current: &Theme) {
@@ -373,7 +387,7 @@ fn draw_generator(f: &mut Frame, gen_length: u8, gen_special: bool, theme: &Them
     // Visual Slider
     let max_len = 32;
     let filled = gen_length.min(max_len) as usize;
-    let bar_width: usize = 20;
+    let bar_width: usize = 32;
     let filled_chars = (filled as f32 / max_len as f32 * bar_width as f32).round() as usize;
     let empty_chars = bar_width.saturating_sub(filled_chars);
     let bar = format!("[{}{}]", "█".repeat(filled_chars), "░".repeat(empty_chars));
