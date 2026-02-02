@@ -57,12 +57,18 @@ impl Table {
                 password TEXT NOT NULL,
                 nonce TEXT,
                 salt TEXT,
+                pinned BOOLEAN DEFAULT FALSE,
                 UNIQUE(platform, user_id)
                 )",
             full_table_name
         );
         match connection.execute(&query,[]){
             Ok(_) => {
+                // Migration: Ensure pinned column exists for existing tables
+                let migration = format!("ALTER TABLE {} ADD COLUMN pinned BOOLEAN DEFAULT FALSE", full_table_name);
+                // We ignore the error if column already exists (simplest migration strategy for SQLite here)
+                let _ = connection.execute(&migration, []);
+                
                 Ok(Self {
                     table_name: full_table_name,
                 })
@@ -132,8 +138,8 @@ impl Table {
         let (ciphertext, nonce) = encrypt_with_key(&entry_key, password.as_bytes()).unwrap();
         
         let query = format!(
-            "INSERT INTO {} (platform, user_id, password, nonce, salt)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO {} (platform, user_id, password, nonce, salt, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, FALSE)
              ON CONFLICT(platform, user_id) DO UPDATE SET
              password = ?3,
              nonce = ?4,
@@ -141,6 +147,26 @@ impl Table {
              &self.table_name
         );
         let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string()]);
+    }
+
+    pub fn toggle_pin(&self, db: &Database, platform: String, user_id: String) -> Result<bool, DatabaseError> {
+        // Check current state
+        let query_check = format!("SELECT pinned FROM {} WHERE platform = ?1 AND user_id = ?2", &self.table_name);
+        let current_pinned: bool = db.connection.query_row(&query_check, [&platform, &user_id], |row| row.get(0)).unwrap_or(false);
+
+        if !current_pinned {
+            // Check cap
+            let query_count = format!("SELECT COUNT(*) FROM {} WHERE pinned = TRUE", &self.table_name);
+            let count: i64 = db.connection.query_row(&query_count, [], |row| row.get(0))?;
+            if count >= 10 {
+                return Err(DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)); // Or custom error "Pin limit reached"
+            }
+        }
+
+        let new_state = !current_pinned;
+        let query_update = format!("UPDATE {} SET pinned = ?1 WHERE platform = ?2 AND user_id = ?3", &self.table_name);
+        db.connection.execute(&query_update, params![new_state, platform, user_id])?;
+        Ok(new_state)
     }
 
     /// Retrieves the decrypted password for an entry.
@@ -188,7 +214,7 @@ impl Table {
     }
     pub fn list(&self, db: &Database) -> Result<Vec<VaultEntry>, DatabaseError> {
         let query = format!(
-            "SELECT platform, user_id, password, salt, nonce FROM {}",
+            "SELECT platform, user_id, password, salt, nonce, pinned FROM {} ORDER BY pinned DESC, platform ASC",
             &self.table_name
         );
         let mut statement = db.connection.prepare(&query)?;
@@ -199,6 +225,7 @@ impl Table {
                 password: row.get(2)?,
                 salt: row.get(3)?,
                 nonce: row.get(4)?,
+                pinned: row.get(5)?,
             })
         })?;
 

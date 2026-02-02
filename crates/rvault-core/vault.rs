@@ -17,7 +17,9 @@ pub struct VaultEntry {
     pub user_id: String,
     pub password: String,
     pub salt: Option<String>,
-    pub nonce: Option<String>
+    pub nonce: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 impl Vault {
     pub fn get_encryption_key(master_password: &str, stored_master_hash: &str) -> Result<[u8; 32], String> {

@@ -12,8 +12,13 @@ pub struct Config {
     pub master_password_hash: Option<String>,
     pub last_used_vault: String,
     pub last_used_database: String,
-    pub session_timeout: String
+    pub session_timeout: String,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
 
+fn default_theme() -> String {
+    "Catppuccin".to_string()
 }
 impl Default for Config {
     fn default() -> Self {
@@ -22,7 +27,8 @@ impl Default for Config {
             master_password_hash: None,
             last_used_database: String::from("default.sqlite"),
             last_used_vault: String::from("main"),
-            session_timeout: String::from("60")
+            session_timeout: String::from("60"),
+            theme: default_theme(),
         }
     }
 }

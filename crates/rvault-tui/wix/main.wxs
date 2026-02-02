@@ -69,6 +69,7 @@
 
         <Package Id='*'
             Keywords='Installer'
+            Description='A modern, secure, and cross-platform password manager'
             Manufacturer='Ata Sesli'
             InstallerVersion='450'
             Languages='1033'

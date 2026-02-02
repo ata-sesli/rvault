@@ -28,12 +28,14 @@ cargo build --release
 ## 📖 Usage Examples
 
 ### First-Time Setup
+
 ```bash
 # Create your master password and keystore (run once)
 rvault setup
 ```
 
 ### Unlock / Lock the Vault
+
 ```bash
 # Start a session (required for protected commands like create/add/get/remove)
 rvault unlock
@@ -43,6 +45,7 @@ rvault lock
 ```
 
 ### Create a New Vault
+
 ```bash
 # Create a vault for work credentials
 rvault create work_vault
@@ -52,6 +55,7 @@ rvault create
 ```
 
 ### Add Passwords
+
 ```bash
 # Add to default vault
 rvault add instagram johndoe:super_secret_password
@@ -61,6 +65,7 @@ rvault add --vault work github jane.doe:my_github_token
 ```
 
 ### Retrieve Passwords
+
 ```bash
 # Get password (automatically copied to clipboard)
 rvault get instagram johndoe
@@ -70,6 +75,7 @@ rvault get --vault work github jane.doe
 ```
 
 ### Generate Secure Passwords
+
 ```bash
 # Generate 12-character password
 rvault generate
@@ -79,6 +85,7 @@ rvault generate --length 20 --special-characters
 ```
 
 ### Manage Credentials
+
 ```bash
 # Remove an entry
 rvault remove instagram johndoe
@@ -86,12 +93,14 @@ rvault remove --vault work github jane.doe
 ```
 
 ### Vault Export (Coming Soon)
+
 ```bash
 # Export vault for backup (planned)
 # rvault export work_vault ./backup/
 ```
 
 ### Clipboard Monitoring (Coming Soon)
+
 ```bash
 # Watch clipboard and auto-save to vault
 rvault watch
@@ -118,21 +127,25 @@ src/
 ## 🔧 Core Components
 
 ### **CLI Interface** (`cli.rs`)
+
 - Built with `clap` for robust argument parsing
 - Supports subcommands for all vault operations
 - Comprehensive help system with usage examples
 
 ### **Cryptography** (`crypto.rs`)
+
 - Secure password generation with customizable constraints
 - ChaCha20-Poly1305 encryption for vault contents
 - Argon2 key derivation for master password hashing
 
 ### **Storage Engine** (`storage.rs`)
+
 - SQLite-based local storage for maximum reliability
 - Each vault is a separate table with encrypted entries
 - Automatic database creation and management
 
 ### **Security Features**
+
 - All passwords encrypted at rest
 - Memory-safe Rust implementation
 - No network dependencies
@@ -168,10 +181,14 @@ We welcome contributions! Please see our contributing guidelines and:
 4. Add tests for new functionality
 5. Submit a pull request
 
+## 📦 Distribution & Releases
+
+This project uses `cargo-dist` for automated multi-platform releases. For instructions on how to publish new versions using Git Tags, please refer to the [Distribution Guide](./DIST_GUIDE.md).
+
 ## 📄 License
 
 This project is licensed under the MIT License and Apache 2.0 License - see the [MIT-LICENSE](LICENSE-MIT.MD) or [APACHE-LICENSE](LICENSE-APACHE.MD) file for details.
 
 **Built with ⚡️ in Rust by [Ata Sesli](https://github.com/ata-sesli)**
 
-*RVault: Because your passwords deserve better
+\*RVault: Because your passwords deserve better

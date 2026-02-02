@@ -8,6 +8,7 @@ use rvault_core::{
 use ratatui::widgets::ListState;
 use crossterm::event::{KeyCode, KeyEventKind};
 use std::io;
+use crate::ui::Theme;
 
 pub enum SetupStage {
     EnterPassword,
@@ -45,11 +46,12 @@ pub enum AppState {
         password: String,
         stage: AddEntryStage,
     },
+    ThemeSelection,
 }
 
 pub struct App {
     pub state: AppState,
-    pub items: Vec<(String, String)>, // (Platform, UserID)
+    pub items: Vec<(String, String, bool)>, // (Platform, UserID, Pinned)
     pub list_state: ListState,
     
     // Generator state
@@ -58,6 +60,10 @@ pub struct App {
     
     // Auth state
     pub auth_error: Option<String>,
+
+    // Theme
+    pub themes: Vec<Theme>,
+    pub current_theme: Theme,
 }
 
 impl App {
@@ -74,6 +80,27 @@ impl App {
             }
         };
 
+        let themes = vec![
+            Theme::catppuccin(), 
+            Theme::dracula(), 
+            Theme::nord(), 
+            Theme::gruvbox(),
+            Theme::solarized(),
+            Theme::monokai(),
+            Theme::tokyo_night(),
+            Theme::one_dark(),
+        ];
+            
+        let current_theme = if let Some(stored_hash) = &config.master_password_hash {
+             // Config exists, try to load theme
+             // Re-load config to be sure or just use the one we loaded?
+             // Actually App::new loaded config at line 71.
+             // We need to match config.theme string to our themes vec.
+             themes.iter().find(|t| t.name == config.theme).cloned().unwrap_or(Theme::default())
+        } else {
+             Theme::default()
+        };
+
         Self {
             state: initial_state,
             items: Vec::new(),
@@ -81,6 +108,8 @@ impl App {
             gen_length: 12,
             gen_special: false,
             auth_error: None,
+            themes,
+            current_theme,
         }
     }
 
@@ -108,7 +137,7 @@ impl App {
             if let Ok(table) = Table::new(&db, None) {
                 if let Ok(entries) = table.list(&db) {
                      self.items = entries.into_iter()
-                        .map(|e| (e.platform, e.user_id))
+                        .map(|e| (e.platform, e.user_id, e.pinned))
                         .collect();
                 }
             }
@@ -179,9 +208,29 @@ impl App {
                         };
                         self.list_state.select(Some(i));
                     }
+                    KeyCode::Char('p') => {
+                        if let Some(i) = self.list_state.selected() {
+                            if let Some((platform, id, _)) = self.items.get(i) {
+                                if let Ok(db) = Database::new() {
+                                    if let Ok(table) = Table::new(&db, None) {
+                                        match table.toggle_pin(&db, platform.clone(), id.clone()) {
+                                            Ok(_) => {
+                                                self.refresh_vault_list();
+                                                self.auth_error = None;
+                                            },
+                                            Err(_) => {
+                                                // Assuming error is mostly due to cap or db error
+                                                self.auth_error = Some("Pin limit reached (max 10)".into());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     KeyCode::Char('d') => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id)) = self.items.get(i) {
+                            if let Some((platform, id, _)) = self.items.get(i) {
                                 self.state = AppState::RemoveConfirmation {
                                     platform: platform.clone(),
                                     user_id: id.clone(),
@@ -191,7 +240,7 @@ impl App {
                     }
                      KeyCode::Char('e') => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id)) = self.items.get(i) {
+                            if let Some((platform, id, _)) = self.items.get(i) {
                                 self.state = AppState::EditPassword {
                                     platform: platform.clone(),
                                     user_id: id.clone(),
@@ -202,7 +251,7 @@ impl App {
                     }
                     KeyCode::Enter => {
                         if let Some(i) = self.list_state.selected() {
-                            if let Some((platform, id)) = self.items.get(i) {
+                            if let Some((platform, id, _)) = self.items.get(i) {
                                  if let Ok(db) = Database::new() {
                                     if let Ok(table) = Table::new(&db, None) {
                                         if let Ok(ek) = get_key_from_session() {
@@ -215,6 +264,35 @@ impl App {
                             }
                         }
                     }
+                    KeyCode::Char('t') => {
+                        self.state = AppState::ThemeSelection;
+                    }
+                    _ => {}
+                }
+            }
+            AppState::ThemeSelection => {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('t')  => {
+                        // Save theme code
+                        let mut config = config::Config::new().unwrap_or_default();
+                        config.theme = self.current_theme.name.clone();
+                        let _ = config.save_config();
+                        self.state = AppState::MainTable;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        // Cycle next theme
+                        if let Some(pos) = self.themes.iter().position(|t| t.name == self.current_theme.name) {
+                            let next = (pos + 1) % self.themes.len();
+                            self.current_theme = self.themes[next].clone();
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        // Cycle prev theme
+                        if let Some(pos) = self.themes.iter().position(|t| t.name == self.current_theme.name) {
+                            let prev = if pos == 0 { self.themes.len() - 1 } else { pos - 1 };
+                            self.current_theme = self.themes[prev].clone();
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -222,9 +300,10 @@ impl App {
                  match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
                     KeyCode::Tab => self.next_tab(),
+                    KeyCode::Char('t') => self.state = AppState::ThemeSelection,
                     KeyCode::Char('s') => self.gen_special = !self.gen_special,
                     KeyCode::Left => if self.gen_length > 4 { self.gen_length -= 1 },
-                    KeyCode::Right => if self.gen_length < 64 { self.gen_length += 1 },
+                    KeyCode::Right => if self.gen_length < 32 { self.gen_length += 1 },
                     KeyCode::Enter => {
                          let pass = crypto::generate_password(self.gen_length, self.gen_special);
                          clipboard::copy_text(pass);

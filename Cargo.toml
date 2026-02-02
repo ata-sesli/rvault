@@ -7,12 +7,12 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.5"
+version = "0.0.6"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/atasesli/rvault"
 authors = ["Ata Sesli"]
-
+description = "A modern, secure, and cross-platform password manager"
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
