@@ -4,14 +4,16 @@
 
 ## ✨ Features
 
+- 🖥️ **Modern TUI** - A beautiful, responsive Terminal User Interface for easy management
 - 🔒 **Military-Grade Encryption** - ChaCha20-Poly1305 encryption with Argon2 key derivation
-- ⚡ **Lightning Fast** - Built in Rust for maximum performance and memory safety
-- 🏠 **Fully Local** - Your data never leaves your machine
-- 📋 **Instant Clipboard** - Passwords copied to clipboard with a single command
-- 🎲 **Secure Password Generation** - Cryptographically secure random passwords
-- 🗂️ **Multiple Vaults** - Organize credentials by context (work, personal, etc.)
-- 🔍 **Quick Retrieval** - Find and copy passwords in milliseconds
-- 📦 **Vault Export** - Backup and migrate your encrypted vaults
+- 🎨 **Theme System** - Choose from 8+ premium themes (Gruvbox, Catppuccin, Nord, etc.)
+- 📌 **Pinned Entries** - Keep your most important credentials at the top for instant access
+- 🔃 **Advanced Sorting** - Sort by time, platform, or user ID (ascending/descending)
+- 🎲 **Secure Generator** - Integrated password generator with visual progress bar
+- 📋 **Instant Clipboard** - Copy credentials with a single keypress or command
+- ⚡ **Rust-Powered** - Blazing-fast performance with zero-cost abstractions
+- 🏠 **Fully Local** - Your data never leaves your machine - no cloud, no leaks
+- 📦 **Multi-Vault** - Organize your life into different encrypted containers
 
 ## 🚀 Installation
 
@@ -25,9 +27,30 @@ cargo install --path .
 cargo build --release
 ```
 
-## 📖 Usage Examples
+### 🖥️ Launching the TUI
 
-### First-Time Setup
+Simply run `rvault` without any arguments to enter the interactive mode:
+
+```bash
+rvault
+```
+
+### ⌨️ TUI Keyboard Shortcuts
+
+| Key         | Action                             |
+| ----------- | ---------------------------------- |
+| `↑/↓`       | Navigate through list              |
+| `Enter`     | Copy password to clipboard         |
+| `a`         | Add new entry                      |
+| `e`         | Edit password                      |
+| `d`         | Delete entry                       |
+| `p`         | Pin/Unpin entry                    |
+| `S`         | Open Sort Selection                |
+| `t`         | Change Theme                       |
+| `Tab`       | Switch between Vault and Generator |
+| `q` / `Esc` | Quit Application                   |
+
+### 🛠️ CLI Setup
 
 ```bash
 # Create your master password and keystore (run once)
@@ -64,65 +87,40 @@ rvault add instagram johndoe:super_secret_password
 rvault add --vault work github jane.doe:my_github_token
 ```
 
-### Retrieve Passwords
+### Instant Search & Retrieval
 
 ```bash
-# Get password (automatically copied to clipboard)
+# Get password via CLI (copies to clipboard)
 rvault get instagram johndoe
-
-# Get from specific vault
-rvault get --vault work github jane.doe
 ```
 
-### Generate Secure Passwords
+### Advanced Password Generation
 
 ```bash
-# Generate 12-character password
-rvault generate
-
-# Generate 20-character password with special characters
-rvault generate --length 20 --special-characters
+# Generate 24-character password with special characters
+rvault generate --length 24 --special-characters
 ```
 
-### Manage Credentials
+## 🎨 Themes
 
-```bash
-# Remove an entry
-rvault remove instagram johndoe
-rvault remove --vault work github jane.doe
-```
+RVault comes with beautifully crafted themes to match your terminal setup:
 
-### Vault Export (Coming Soon)
-
-```bash
-# Export vault for backup (planned)
-# rvault export work_vault ./backup/
-```
-
-### Clipboard Monitoring (Coming Soon)
-
-```bash
-# Watch clipboard and auto-save to vault
-rvault watch
-
-# Stop watching
-rvault unwatch
-```
+- **Gruvbox** (Default)
+- **Catppuccin**
+- **Dracula**
+- **Tokyo Night**
+- **Nord**
+- **One Dark**
+- **Solarized**
+- **Monokai**
 
 ## 🏗️ Project Structure
 
-```
-src/
-├── main.rs          # Application entry point and command routing
-├── cli.rs           # Command-line interface definitions using clap
-├── crypto.rs        # Encryption, hashing, and password generation
-├── storage.rs       # SQLite database operations and vault management
-├── clipboard.rs     # Clipboard integration for password copying
-├── account.rs       # Account data structures and traits
-├── error.rs         # Custom error types and handling
-├── vault.rs         # Vault management operations (planned)
-└── watcher.rs       # Clipboard monitoring functionality (planned)
-```
+The project is structured as a Rust workspace for maximum modularity:
+
+- `crates/rvault-core` - The engine: Cryptography, Database, and internal logic
+- `crates/rvault-tui` - The experience: Ratatui-based Terminal UI
+- `crates/rvault-cli` - The interface: Clap-based Command Line Interface
 
 ## 🔧 Core Components
 
@@ -153,13 +151,15 @@ src/
 
 ## 🛠️ Dependencies
 
-- **clap** - Command-line argument parsing
-- **rusqlite** - SQLite database interface
-- **chacha20poly1305** - Authenticated encryption
-- **argon2** - Password hashing
-- **arboard** - Cross-platform clipboard access
-- **directories** - OS-appropriate data directories
-- **rand** - Cryptographically secure random generation
+- **Ratatui** - Modern TUI library for rich terminal interfaces
+- **Crossterm** - Terminal manipulation and event handling
+- **Clap** - Command-line argument parsing
+- **Rusqlite** - SQLite database interface
+- **Argon2** - Password hashing (Key Derivation)
+- **ChaCha20-Poly1305** - State-of-the-art encryption
+- **Chrono** - Time and date management
+- **Arboard** - Cross-platform clipboard access
+- **Directories** - OS-appropriate data locations
 
 ## 🔒 Security Model
 
@@ -180,10 +180,6 @@ We welcome contributions! Please see our contributing guidelines and:
 3. Make your changes
 4. Add tests for new functionality
 5. Submit a pull request
-
-## 📦 Distribution & Releases
-
-This project uses `cargo-dist` for automated multi-platform releases. For instructions on how to publish new versions using Git Tags, please refer to the [Distribution Guide](./DIST_GUIDE.md).
 
 ## 📄 License
 
