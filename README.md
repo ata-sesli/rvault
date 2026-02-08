@@ -13,7 +13,30 @@
 - 📋 **Instant Clipboard** - Copy credentials with a single keypress or command
 - ⚡ **Rust-Powered** - Blazing-fast performance with zero-cost abstractions
 - 🏠 **Fully Local** - Your data never leaves your machine - no cloud, no leaks
+- 🏠 **Fully Local** - Your data never leaves your machine - no cloud, no leaks
 - 📦 **Multi-Vault** - Organize your life into different encrypted containers
+
+## 🖥️ Intelligent Terminal Interface (TUI)
+
+RVault isn't just a command-line tool; it features a full-fledged, interactive terminal user interface designed for speed and usability.
+
+### **Seamless Navigation & Interaction**
+
+- **Vim-like Keybindings**: Navigate lists with `j/k` or arrow keys for maximum efficiency.
+- **Smart Input Fields**: Text inputs support full cursor movement (Left/Right), insertion, and deletion, making edits precise and easy.
+- **Context-Aware Footer**: The help bar at the bottom dynamically updates to show relevant shortcuts for the current screen.
+
+### **Visual Feedback & Clarity**
+
+- **Instant Toast Notifications**: Get immediate, non-intrusive feedback (e.g., "Password copied!") in the top-right corner.
+- **Rich Data Display**: View comprehensive details including Platform, User ID, and precise "Last Modified" timestamps (e.g., "March 24 2026 14:30").
+- **Pinned Entries**: Keep your most-used credentials at the top of the list, marked with a distinctive pin icon for instant recognition.
+
+### **Enhanced Security Features**
+
+- **Secure "Lock & Quit"**: Press `Shift+Q` anywhere in the app to immediately end your session and close the vault. This ensures your data is safe even if you step away.
+- **Visual Password Generation**: Watch your password being built in real-time with sliders for length and toggles for complexity.
+- **Hidden Inputs**: All sensitive fields (passwords, master key) are masked by default.
 
 ## 🚀 Installation
 
