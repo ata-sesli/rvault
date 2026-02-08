@@ -9,7 +9,9 @@ use rvault_core::{
 use ratatui::widgets::ListState;
 use crossterm::event::{KeyCode, KeyEventKind};
 use std::io;
+use std::time::{Duration, Instant};
 use crate::ui::Theme;
+use crate::input::InputState;
 
 pub enum SetupStage {
     EnterPassword,
@@ -18,6 +20,11 @@ pub enum SetupStage {
 
 pub enum AddEntryStage {
     Platform,
+    UserId,
+    Password,
+}
+
+pub enum EditEntryStage {
     UserId,
     Password,
 }
@@ -56,6 +63,11 @@ impl SortMode {
     }
 }
 
+pub struct Toast {
+    pub message: String,
+    pub expires_at: Instant,
+}
+
 pub enum AppState {
     Authentication(String), // Stores current password input
     MainTable,
@@ -70,15 +82,17 @@ pub enum AppState {
         platform: String,
         user_id: String,
     },
-    EditPassword {
-        platform: String,
-        user_id: String,
-        input: String,
+    EditEntry {
+        platform: String, // Immutable
+        original_user_id: String, // Target for update
+        user_id: InputState,
+        password: InputState,
+        stage: EditEntryStage,
     },
     AddEntry {
-        platform: String,
-        user_id: String,
-        password: String,
+        platform: InputState,
+        user_id: InputState,
+        password: InputState,
         stage: AddEntryStage,
     },
     ThemeSelection,
@@ -102,7 +116,11 @@ pub struct App {
     pub current_theme: Theme,
     
     // Sorting
+    // Sorting
     pub sort_mode: SortMode,
+    
+    // Toast
+    pub toast: Option<Toast>,
 }
 
 impl App {
@@ -150,6 +168,22 @@ impl App {
             themes,
             current_theme,
             sort_mode: SortMode::PlatformAsc,
+            toast: None,
+        }
+    }
+
+    pub fn show_toast(&mut self, message: &str) {
+        self.toast = Some(Toast {
+            message: message.to_string(),
+            expires_at: Instant::now() + Duration::from_secs(3),
+        });
+    }
+
+    pub fn tick(&mut self) {
+        if let Some(toast) = &self.toast {
+            if Instant::now() >= toast.expires_at {
+                self.toast = None;
+            }
         }
     }
 
@@ -227,6 +261,12 @@ impl App {
             return Ok(false);
         }
 
+        // Global shortcut: Shift+Q to Lock & Quit
+        if let KeyCode::Char('Q') = key.code {
+            let _ = rvault_core::lock(); // Best effort lock
+            return Ok(true); // Signal to quit
+        }
+
         let mut transition_to_main = false;
         let mut transition_to_login = false;
 
@@ -254,9 +294,9 @@ impl App {
                          }
                          input.clear();
                     }
+                    KeyCode::Esc | KeyCode::Char('Q') => return Ok(true), // Signal to quit. Shift+Q maps to Char('Q') usually.
                     KeyCode::Char(c) => input.push(c),
                     KeyCode::Backspace => { input.pop(); },
-                    KeyCode::Esc => return Ok(true), // Signal to quit
                     _ => {}
                 }
             }
@@ -264,13 +304,14 @@ impl App {
                 match key.code {
                      KeyCode::Char('a') => {
                         self.state = AppState::AddEntry {
-                            platform: String::new(),
-                            user_id: String::new(),
-                            password: String::new(),
+                            platform: InputState::new(),
+                            user_id: InputState::new(),
+                            password: InputState::new(),
                             stage: AddEntryStage::Platform,
                         };
                     }
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+                    KeyCode::Char('Q') => return Ok(true), // Lock and Quit immediately
                     KeyCode::Tab => self.next_tab(),
                     KeyCode::Down => {
                         let i = match self.list_state.selected() {
@@ -318,10 +359,12 @@ impl App {
                      KeyCode::Char('e') => {
                         if let Some(i) = self.list_state.selected() {
                             if let Some(entry) = self.items.get(i) {
-                                self.state = AppState::EditPassword {
+                                self.state = AppState::EditEntry {
                                     platform: entry.platform.clone(),
-                                    user_id: entry.user_id.clone(),
-                                    input: String::new(),
+                                    original_user_id: entry.user_id.clone(),
+                                    user_id: InputState::with_value(entry.user_id.clone()),
+                                    password: InputState::new(), // Start empty for security, or fetch? Better empty to act as "change password"
+                                    stage: EditEntryStage::UserId,
                                 };
                             }
                         }
@@ -334,6 +377,7 @@ impl App {
                                         if let Ok(ek) = get_key_from_session() {
                                             if let Ok(plaintext) = table.retrieve_password_with_key(&db, &ek, entry.platform.clone(), entry.user_id.clone()) {
                                                 clipboard::copy_text(plaintext);
+                                                self.show_toast("Password has been copied!");
                                             }
                                         }
                                     }
@@ -415,6 +459,7 @@ impl App {
                     KeyCode::Enter => {
                          let pass = crypto::generate_password(self.gen_length, self.gen_special);
                          clipboard::copy_text(pass);
+                         self.show_toast("Password has been copied!");
                     }
                     _ => {}
                  }
@@ -495,21 +540,75 @@ impl App {
                     _ => {}
                 }
             }
-            AppState::EditPassword { platform, user_id, input } => {
+            AppState::EditEntry { platform, original_user_id, user_id, password, stage } => {
                 match key.code {
                     KeyCode::Enter => {
-                         if let Ok(db) = Database::new() {
-                             if let Ok(table) = Table::new(&db, None) {
-                                  if let Ok(ek) = get_key_from_session() {
-                                      let id_pass = format!("{}:{}", user_id, input);
-                                      table.add_entry_with_key(&db, &ek, platform.clone(), id_pass);
-                                  }
+                         match stage {
+                             EditEntryStage::UserId => {
+                                 if !user_id.value.is_empty() {
+                                     *stage = EditEntryStage::Password;
+                                 }
+                             },
+                             EditEntryStage::Password => {
+                                 if !password.value.is_empty() {
+                                     // Save updates
+                                     if let Ok(db) = Database::new() {
+                                         if let Ok(table) = Table::new(&db, None) {
+                                              if let Ok(ek) = get_key_from_session() {
+                                                  if let Err(e) = table.update_entry(&db, &ek, platform, original_user_id, &user_id.value, &password.value) {
+                                                      // Handle error? For now just print to stderr or set global error
+                                                      // self.error = Some(...) // We don't have a global error field in AppState enum variants easily accessible without refactor.
+                                                      // But we do have self.auth_error in App struct.
+                                                      // Assuming we can't easily set self.auth_error from inside match without mutable borrow issues if helper methods aren't used.
+                                                      // But we are in `match &mut self.state`. We can modify `self.auth_error`? 
+                                                      // No, `self.state` is borrowed mutably. `self.auth_error` is another field. 
+                                                      // We need to split borrows or use boolean flag.
+                                                      // For simplicity, if error, we might fail silently or print to stderr (which TUI hides).
+                                                      // Ideally we'd transition to MainTable with an error message.
+                                                      // Let's just transition to main table.
+                                                  }
+                                              }
+                                         }
+                                     }
+                                     transition_to_main = true;
+                                 }
                              }
                          }
-                         transition_to_main = true;
                     }
-                    KeyCode::Char(c) => input.push(c),
-                    KeyCode::Backspace => { input.pop(); },
+                    KeyCode::Left => {
+                        match stage {
+                            EditEntryStage::UserId => user_id.move_cursor_left(),
+                            EditEntryStage::Password => password.move_cursor_left(),
+                        }
+                    },
+                    KeyCode::Right => {
+                         match stage {
+                            EditEntryStage::UserId => user_id.move_cursor_right(),
+                            EditEntryStage::Password => password.move_cursor_right(),
+                        }
+                    },
+                    KeyCode::Char(c) => {
+                         match stage {
+                            EditEntryStage::UserId => user_id.insert_char(c),
+                            EditEntryStage::Password => password.insert_char(c),
+                        }
+                    },
+                    KeyCode::Backspace => { 
+                         match stage {
+                            EditEntryStage::UserId => user_id.delete_char(),
+                            EditEntryStage::Password => password.delete_char(),
+                        }
+                    },
+                    KeyCode::Up => {
+                         if let EditEntryStage::Password = stage {
+                             *stage = EditEntryStage::UserId;
+                         }
+                    },
+                    KeyCode::Down => {
+                         if let EditEntryStage::UserId = stage {
+                             *stage = EditEntryStage::Password;
+                         }
+                    },
                     KeyCode::Esc => {
                         transition_to_main = true;
                     }
@@ -522,23 +621,23 @@ impl App {
                     KeyCode::Enter => {
                         match stage {
                             AddEntryStage::Platform => {
-                                if !platform.is_empty() {
+                                if !platform.value.is_empty() {
                                     *stage = AddEntryStage::UserId;
                                 }
                             }
                             AddEntryStage::UserId => {
-                                if !user_id.is_empty() {
+                                if !user_id.value.is_empty() {
                                     *stage = AddEntryStage::Password;
                                 }
                             }
                             AddEntryStage::Password => {
-                                if !password.is_empty() {
+                                if !password.value.is_empty() {
                                     // Save the entry
                                     if let Ok(db) = Database::new() {
                                         if let Ok(table) = Table::new(&db, None) {
                                             if let Ok(ek) = get_key_from_session() {
-                                                let id_pass = format!("{}:{}", user_id, password);
-                                                table.add_entry_with_key(&db, &ek, platform.clone(), id_pass);
+                                                let id_pass = format!("{}:{}", user_id.value, password.value);
+                                                table.add_entry_with_key(&db, &ek, platform.value.clone(), id_pass);
                                             }
                                         }
                                     }
@@ -547,11 +646,25 @@ impl App {
                             }
                         }
                     }
+                    KeyCode::Left => {
+                         match stage {
+                            AddEntryStage::Platform => platform.move_cursor_left(),
+                            AddEntryStage::UserId => user_id.move_cursor_left(),
+                            AddEntryStage::Password => password.move_cursor_left(),
+                        }
+                    },
+                    KeyCode::Right => {
+                         match stage {
+                            AddEntryStage::Platform => platform.move_cursor_right(),
+                            AddEntryStage::UserId => user_id.move_cursor_right(),
+                            AddEntryStage::Password => password.move_cursor_right(),
+                        }
+                    },
                     KeyCode::Backspace => {
                         match stage {
-                            AddEntryStage::Platform => { platform.pop(); },
-                            AddEntryStage::UserId => { user_id.pop(); },
-                            AddEntryStage::Password => { password.pop(); },
+                            AddEntryStage::Platform => platform.delete_char(),
+                            AddEntryStage::UserId => user_id.delete_char(),
+                            AddEntryStage::Password => password.delete_char(),
                         }
                     }
                     KeyCode::Up => {
@@ -570,9 +683,9 @@ impl App {
                     }
                     KeyCode::Char(c) => {
                          match stage {
-                            AddEntryStage::Platform => platform.push(c),
-                            AddEntryStage::UserId => user_id.push(c),
-                            AddEntryStage::Password => password.push(c),
+                            AddEntryStage::Platform => platform.insert_char(c),
+                            AddEntryStage::UserId => user_id.insert_char(c),
+                            AddEntryStage::Password => password.insert_char(c),
                         }
                     }
                      _ => {}

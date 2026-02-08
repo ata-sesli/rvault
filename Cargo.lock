@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "rvault-core"
-version = "0.0.8"
+version = "0.1.0"
 dependencies = [
  "arboard",
  "argon2",
@@ -1854,6 +1854,7 @@ name = "rvault-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crossterm",
  "ratatui",
  "rvault-core",

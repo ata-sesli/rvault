@@ -24,3 +24,9 @@ pub mod watcher; // Based on your file list, this seems to be included
 // Re-export common types for easier access in other crates (CLI/GUI)
 pub use error::{ConfigError, DatabaseError}; 
 pub use vault::VaultEntry; 
+
+/// Locks the vault by ending the current session.
+/// This does NOT clear the clipboard contents, per user preference.
+pub fn lock() -> Result<(), String> {
+    session::end_session()
+} 

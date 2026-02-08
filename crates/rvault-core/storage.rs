@@ -161,6 +161,57 @@ impl Table {
         let _ = db.connection.execute(&query, params![platform, user_id.to_string(), ciphertext, nonce, salt.to_string(), now, now]);
     }
 
+    /// Updates an existing entry's User ID and/or Password.
+    /// Platform is used as a lookup key along with the OLD User ID, and cannot be changed.
+    pub fn update_entry(
+        &self, 
+        db: &Database, 
+        encryption_key: &[u8], 
+        platform: &str,
+        old_user_id: &str,
+        new_user_id: &str,
+        new_password: &str
+    ) -> Result<(), DatabaseError> {
+        // 1. Generate new salt and key for the new data
+        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+        let mut entry_key = [0u8; 32];
+        Argon2::default().hash_password_into(encryption_key, salt.as_ref().as_bytes(), &mut entry_key).unwrap();
+
+        // 2. Encrypt the NEW password
+        let (ciphertext, nonce) = encrypt_with_key(&entry_key, new_password.as_bytes()).unwrap();
+        let now = Utc::now().timestamp();
+
+        // 3. Update the entry
+        // We must ensure that if we are changing the user_id, the new user_id doesn't already exist for this platform
+        if old_user_id != new_user_id {
+            let check_query = format!("SELECT COUNT(*) FROM {} WHERE platform = ?1 AND user_id = ?2", &self.table_name);
+            let count: i64 = db.connection.query_row(&check_query, [platform, new_user_id], |r| r.get(0))?;
+            if count > 0 {
+                return Err(DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(19), // Constraint violation code roughly
+                    Some("User ID already exists for this platform".into())
+                )));
+            }
+        }
+
+        let query = format!(
+            "UPDATE {} SET user_id = ?1, password = ?2, nonce = ?3, salt = ?4, updated_at = ?5 WHERE platform = ?6 AND user_id = ?7",
+            &self.table_name
+        );
+        
+        db.connection.execute(&query, params![
+            new_user_id,
+            ciphertext,
+            nonce,
+            salt.to_string(),
+            now,
+            platform,
+            old_user_id
+        ])?;
+        
+        Ok(())
+    }
+
     pub fn toggle_pin(&self, db: &Database, platform: String, user_id: String) -> Result<bool, DatabaseError> {
         // Check current state
         let query_check = format!("SELECT pinned FROM {} WHERE platform = ?1 AND user_id = ?2", &self.table_name);

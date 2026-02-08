@@ -5,8 +5,10 @@ use ratatui::{
     widgets::{Block, Borders, BorderType, List, ListItem, ListState, Paragraph, Tabs, Clear},
     Frame,
 };
-use crate::app::{App, AppState, AddEntryStage, SetupStage, SortMode};
+use crate::app::{App, AppState, AddEntryStage, EditEntryStage, SetupStage, SortMode}; // Added EditEntryStage
+use crate::input::InputState; // Import InputState
 use rvault_core::vault::VaultEntry;
+use chrono::{DateTime, Local, TimeZone};
 
 #[derive(Clone)]
 pub struct Theme {
@@ -40,7 +42,7 @@ impl Theme {
             bg: Color::Rgb(40, 42, 54),
             surface: Color::Rgb(68, 71, 90),
             accent: Color::Rgb(189, 147, 249), // Purple
-            warning: Color::Rgb(241, 250, 140), // Yellow
+            warning: Color::Rgb(241, 150, 240), // Pinkish for better contrast? Or keep Yellow
             text: Color::Rgb(248, 248, 242),
             muted: Color::Rgb(98, 114, 164),
             error: Color::Rgb(255, 85, 85),
@@ -139,10 +141,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         AppState::Generator => draw_generator(f, app.gen_length, app.gen_special, theme),
         AppState::Setup { password, confirm, stage, error } => draw_setup(f, password, confirm, stage, error, theme),
         AppState::RemoveConfirmation { platform, user_id } => draw_remove_confirmation(f, platform, user_id, theme),
-        AppState::EditPassword { platform, user_id, input } => draw_edit_password(f, platform, user_id, input, theme),
+        AppState::EditEntry { platform, original_user_id, user_id, password, stage } => draw_edit_entry(f, platform, original_user_id, user_id, password, stage, theme),
         AppState::AddEntry { platform, user_id, password, stage } => draw_add_entry(f, platform, user_id, password, stage, theme),
         AppState::ThemeSelection => draw_theme_selection(f, &app.themes, theme),
         AppState::SortSelection => draw_sort_selection(f, &app.sort_mode, theme),
+    }
+
+    if let Some(toast) = &app.toast {
+        draw_toast(f, &toast.message, theme);
     }
 }
 
@@ -213,6 +219,33 @@ fn draw_theme_selection(f: &mut Frame, themes: &[Theme], current: &Theme) {
             .style(Style::default().bg(current.surface).fg(current.text))); 
     
     f.render_widget(list, area);
+}
+
+fn draw_toast(f: &mut Frame, message: &str, theme: &Theme) {
+    let area = f.area();
+    let toast_width = (message.len() + 4) as u16;
+    let toast_height = 3;
+    let toast_area = Rect {
+        x: area.width.saturating_sub(toast_width + 2),
+        y: 1, // Top right, slightly below border
+        width: toast_width,
+        height: toast_height,
+    };
+    
+    draw_shadow(f, toast_area);
+    
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.surface));
+    
+    let text = Paragraph::new(Span::styled(message, Style::default().fg(theme.text).add_modifier(Modifier::BOLD)))
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center);
+
+    f.render_widget(Clear, toast_area);
+    f.render_widget(text, toast_area);
 }
 
 fn draw_auth(f: &mut Frame, input: &String, error: &Option<String>, theme: &Theme) {
@@ -323,7 +356,18 @@ fn draw_main(f: &mut Frame, items: &[VaultEntry], list_state: &mut ListState, er
                     Span::styled(pin_icon, Style::default().fg(theme.warning)),
                     Span::styled(format!("{:<20}", entry.platform), Style::default().fg(theme.text)),
                     Span::styled(" │ ", Style::default().fg(theme.muted)),
-                    Span::styled(&entry.user_id, Style::default().fg(theme.text)),
+                    Span::styled(format!("{:<25}", &entry.user_id), Style::default().fg(theme.text)),
+                    Span::styled(" │ ", Style::default().fg(theme.muted)),
+                    Span::styled(
+                        if entry.updated_at > 0 {
+                            let dt = DateTime::from_timestamp(entry.updated_at, 0).unwrap_or_default();
+                            let local_dt: DateTime<Local> = DateTime::from(dt);
+                            format!("{}", local_dt.format("%B %d %Y %H:%M"))
+                        } else {
+                           "Unknown".to_string()
+                        },
+                        Style::default().fg(theme.muted)
+                    ),
                 ]),
             ])
         })
@@ -341,7 +385,7 @@ fn draw_main(f: &mut Frame, items: &[VaultEntry], list_state: &mut ListState, er
         
     f.render_stateful_widget(list, chunks[1], list_state);
     
-    draw_help(f, chunks[2], "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Edit: e | Delete: d | Switch Tab: Tab | Themes: t | Sort: S | Quit: q", theme);
+    draw_help(f, chunks[2], "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Edit: e | Delete: d | Switch Tab: Tab | Themes: t | Sort: S | Lock: Q | Quit: q", theme);
 }
 
 fn draw_generator(f: &mut Frame, gen_length: u8, gen_special: bool, theme: &Theme) {
@@ -421,7 +465,7 @@ fn draw_generator(f: &mut Frame, gen_length: u8, gen_special: bool, theme: &Them
 
     f.render_widget(Paragraph::new("Press [Enter] to Generate & Copy").style(Style::default().fg(theme.muted)).alignment(ratatui::layout::Alignment::Center), inner_layout[4]);
 
-    draw_help(f, chunks[2], "Adjust: ←/→ | Toggle Spec: s | Generate: Enter | Switch Tab: Tab | Themes: t | Quit: q", theme);
+    draw_help(f, chunks[2], "Adjust: ←/→ | Toggle Spec: s | Generate: Enter | Switch Tab: Tab | Themes: t | Lock: Q | Quit: q", theme);
 }
 
 fn draw_remove_confirmation(f: &mut Frame, platform: &str, user_id: &str, theme: &Theme) {
@@ -458,13 +502,13 @@ fn draw_remove_confirmation(f: &mut Frame, platform: &str, user_id: &str, theme:
     f.render_widget(p, area);
 }
 
-fn draw_edit_password(f: &mut Frame, platform: &str, user_id: &str, input: &str, theme: &Theme) {
-    let area = centered_rect_fixed(50, 10, f.area());
+fn draw_edit_entry(f: &mut Frame, platform: &str, _original_user_id: &str, user_id: &InputState, password: &InputState, stage: &EditEntryStage, theme: &Theme) {
+    let area = centered_rect_fixed(50, 15, f.area());
     draw_shadow(f, area);
 
     // Modal block
     let block = Block::default()
-        .title(" ✏️  Edit Password ")
+        .title(" ✏️  Edit Entry ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.accent))
@@ -478,23 +522,29 @@ fn draw_edit_password(f: &mut Frame, platform: &str, user_id: &str, input: &str,
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(1), // Info text
+            Constraint::Length(3), // Platform (Read-only)
             Constraint::Length(1), // Spacer
-            Constraint::Length(3), // Input box
-            Constraint::Min(0),
+            Constraint::Length(3), // UserID (Editable)
+            Constraint::Length(1), // Spacer
+            Constraint::Length(3), // Password (Editable)
         ])
         .split(area);
 
-    let info_text = Line::from(vec![
-        Span::styled(format!("Update for {} ", platform), Style::default().fg(theme.muted)),
-        Span::styled(format!("({})", user_id), Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-    ]);
-    f.render_widget(Paragraph::new(info_text).alignment(ratatui::layout::Alignment::Center), chunks[0]);
+    // Platform is read-only
+    let platform_block = Block::default()
+        .title("Platform (Immutable)")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.muted))
+        .style(Style::default().bg(theme.surface));
+    let p_platform = Paragraph::new(platform).block(platform_block).style(Style::default().fg(theme.muted));
+    f.render_widget(p_platform, chunks[0]);
 
-    draw_input_box(f, chunks[2], "New Password", input, "Type new password...", true, false, theme); // Active always true as it's the only field? Or handle focus if complex. It is the only field.
+    draw_input_box(f, chunks[2], "User ID", user_id, "e.g. user@example.com", matches!(stage, EditEntryStage::UserId), false, theme);
+    draw_input_box(f, chunks[4], "New Password", password, "Leave empty to keep current", matches!(stage, EditEntryStage::Password), true, theme);
 }
 
-fn draw_add_entry(f: &mut Frame, platform: &str, user_id: &str, password: &str, stage: &AddEntryStage, theme: &Theme) {
+fn draw_add_entry(f: &mut Frame, platform: &InputState, user_id: &InputState, password: &InputState, stage: &AddEntryStage, theme: &Theme) {
     let area = centered_rect_fixed(50, 15, f.area());
     draw_shadow(f, area);
 
@@ -588,7 +638,7 @@ fn draw_shadow(f: &mut Frame, area: Rect) {
     f.render_widget(shadow_block, shadow_area);
 }
 
-fn draw_input_box(f: &mut Frame, area: Rect, title: &str, value: &str, placeholder: &str, active: bool, mask: bool, theme: &Theme) {
+fn draw_input_box(f: &mut Frame, area: Rect, title: &str, state: &InputState, placeholder: &str, active: bool, mask: bool, theme: &Theme) {
     let border_style = if active {
         Style::default().fg(theme.accent)
     } else {
@@ -602,14 +652,31 @@ fn draw_input_box(f: &mut Frame, area: Rect, title: &str, value: &str, placehold
         .border_style(border_style)
         .style(Style::default().bg(theme.surface));
 
-    let display_value = if value.is_empty() && !active {
+    let value = &state.value;
+    let cursor_pos = state.cursor_position;
+
+    // Determine visual content
+    let content = if value.is_empty() && !active {
         Span::styled(placeholder, Style::default().fg(theme.muted))
     } else {
-        let content = if mask { "*".repeat(value.len()) } else { value.to_string() };
-        let content = if active { format!("{}|", content) } else { content }; // Cursor
-        Span::styled(content, Style::default().fg(theme.text))
+        // If active, show cursor. If mask, mask content but keep cursor logic? 
+        // Masking makes cursor logic tricky if we just repeat '*'. 
+        // Simplest: just use '*' for all chars.
+        let display_text = if mask { "*".repeat(value.len()) } else { value.clone() };
+        Span::styled(display_text, Style::default().fg(theme.text))
     };
 
-    let p = Paragraph::new(display_value).block(block);
+    let p = Paragraph::new(content).block(block);
     f.render_widget(p, area);
+
+    // Draw Cursor if active
+    if active {
+        // Calculate cursor screen position
+        // Input box inner area is area.x+1, area.y+1
+        // We need to clamp cursor to visible width if scrolling (not implemented yet, assuming short inputs)
+        // For masked input, cursor moves normally.
+        let cursor_x = area.x + 1 + cursor_pos as u16;
+        let cursor_y = area.y + 1;
+        f.set_cursor_position((cursor_x, cursor_y));
+    }
 }

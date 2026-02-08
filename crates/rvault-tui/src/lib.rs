@@ -1,5 +1,6 @@
 pub mod app;
 pub mod ui;
+pub mod input;
 
 use anyhow::Result;
 use crossterm::{
@@ -59,10 +60,13 @@ where B::Error: Into<io::Error>
 
         if event::poll(std::time::Duration::from_millis(100))? {
              if let event::Event::Key(key) = event::read()? {
+                 app.tick();
                  if app.on_key(key)? {
                      return Ok(());
                  }
              }
+        } else {
+            app.tick();
         }
     }
 }

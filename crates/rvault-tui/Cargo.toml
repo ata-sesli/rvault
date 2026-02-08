@@ -19,3 +19,4 @@ rvault-core = { path = "../rvault-core" }
 ratatui = "0.30.0"
 anyhow = "1.0.100"
 crossterm = "0.29.0"
+chrono = "0.4.43"
