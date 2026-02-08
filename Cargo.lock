@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "rvault-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "rpassword",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "rvault-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arboard",
  "argon2",
@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "rvault-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
