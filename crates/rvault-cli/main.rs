@@ -49,39 +49,7 @@ fn main() {
                 .ok();
             return;
         }
-        Commands::Update {} => {
-            println!("Checking for updates...");
-            let status = self_update::backends::github::Update::configure()
-                .repo_owner("ata-sesli")
-                .repo_name("rvault")
-                .bin_name("rvault")
-                .show_download_progress(true)
-                .show_output(true)
-                .current_version(env!("CARGO_PKG_VERSION"))
-                .build();
-            
-            match status {
-                 Ok(update_builder) => {
-                      match update_builder.update() {
-                          Ok(status) => {
-                               if status.updated() {
-                                   println!("Update successful! Version {} is now installed.", status.version());
-                               } else {
-                                   println!("Already up to date.");
-                               }
-                          }
-                          Err(e) => {
-                               eprintln!("Update failed: {}", e);
-                               eprintln!("Please ensure you have internet connection and the repository has releases.");
-                          }
-                      }
-                 }
-                 Err(e) => {
-                      eprintln!("Configuration failed: {}", e);
-                 }
-            }
-            return;
-        }
+
         Commands::Generate { length, special_characters } => {
             let final_password = crypto::generate_password(*length, *special_characters);
             clipboard::copy_text(final_password);

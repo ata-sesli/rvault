@@ -19,25 +19,37 @@ impl InputState {
 
     pub fn move_cursor_left(&mut self) {
         if self.cursor_position > 0 {
-            self.cursor_position -= 1;
+            let mut new_pos = self.cursor_position - 1;
+            while !self.value.is_char_boundary(new_pos) {
+                new_pos -= 1;
+            }
+            self.cursor_position = new_pos;
         }
     }
 
     pub fn move_cursor_right(&mut self) {
         if self.cursor_position < self.value.len() {
-            self.cursor_position += 1;
+            let mut new_pos = self.cursor_position + 1;
+            while new_pos < self.value.len() && !self.value.is_char_boundary(new_pos) {
+                new_pos += 1;
+            }
+            self.cursor_position = new_pos;
         }
     }
 
     pub fn insert_char(&mut self, c: char) {
         self.value.insert(self.cursor_position, c);
-        self.cursor_position += 1;
+        self.cursor_position += c.len_utf8();
     }
 
     pub fn delete_char(&mut self) {
         if self.cursor_position > 0 {
-            self.value.remove(self.cursor_position - 1);
-            self.cursor_position -= 1;
+            let mut new_pos = self.cursor_position - 1;
+            while !self.value.is_char_boundary(new_pos) {
+                new_pos -= 1;
+            }
+            self.value.remove(new_pos);
+            self.cursor_position = new_pos;
         }
     }
 

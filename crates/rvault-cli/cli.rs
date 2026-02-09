@@ -75,7 +75,5 @@ pub enum Commands {
     /// Must run if user runs the app for the first time, it prompts and sets the master password.
     /// Example Usage: rvault setup
     Setup {},
-    /// Updates the application to the latest version from GitHub.
-    /// Example Usage: rvault update
-    Update {}
+
 }

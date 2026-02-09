@@ -261,7 +261,7 @@ fn draw_auth(f: &mut Frame, input: &String, error: &Option<String>, theme: &Them
 
     let mut text = vec![
         Line::from(Span::styled("Password  ", Style::default().fg(theme.muted))),
-        Line::from(Span::styled("*".repeat(input.len()), Style::default().fg(theme.text).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("*".repeat(input.chars().count()), Style::default().fg(theme.text).add_modifier(Modifier::BOLD))),
     ];
     
     if let Some(err) = error {
@@ -294,8 +294,8 @@ fn draw_setup(f: &mut Frame, password: &String, confirm: &String, stage: &SetupS
     };
 
     let input_vis = match stage {
-        SetupStage::EnterPassword => "*".repeat(password.len()),
-        SetupStage::ConfirmPassword => "*".repeat(confirm.len()),
+        SetupStage::EnterPassword => "*".repeat(password.chars().count()),
+        SetupStage::ConfirmPassword => "*".repeat(confirm.chars().count()),
     };
 
     let mut text = vec![
@@ -656,13 +656,16 @@ fn draw_input_box(f: &mut Frame, area: Rect, title: &str, state: &InputState, pl
     let cursor_pos = state.cursor_position;
 
     // Determine visual content
+    let (display_text, cursor_offset) = if mask {
+        ("*".repeat(value.chars().count()), value[..cursor_pos].chars().count() as u16)
+    } else {
+        // If active, show cursor. 
+        (value.clone(), Span::raw(&value[..cursor_pos]).width() as u16)
+    };
+
     let content = if value.is_empty() && !active {
         Span::styled(placeholder, Style::default().fg(theme.muted))
     } else {
-        // If active, show cursor. If mask, mask content but keep cursor logic? 
-        // Masking makes cursor logic tricky if we just repeat '*'. 
-        // Simplest: just use '*' for all chars.
-        let display_text = if mask { "*".repeat(value.len()) } else { value.clone() };
         Span::styled(display_text, Style::default().fg(theme.text))
     };
 
@@ -674,8 +677,7 @@ fn draw_input_box(f: &mut Frame, area: Rect, title: &str, state: &InputState, pl
         // Calculate cursor screen position
         // Input box inner area is area.x+1, area.y+1
         // We need to clamp cursor to visible width if scrolling (not implemented yet, assuming short inputs)
-        // For masked input, cursor moves normally.
-        let cursor_x = area.x + 1 + cursor_pos as u16;
+        let cursor_x = area.x + 1 + cursor_offset;
         let cursor_y = area.y + 1;
         f.set_cursor_position((cursor_x, cursor_y));
     }

@@ -13,6 +13,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/ata-sesli/rvault"
 authors = ["Ata Sesli"]
 description = "A modern, secure, and cross-platform password manager"
+install-updater = true
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

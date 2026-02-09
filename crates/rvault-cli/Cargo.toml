@@ -20,7 +20,7 @@ rvault-tui = { path = "../rvault-tui" }
 clap = { version = "4.5.41", features = ["derive"] }
 rpassword = "7.4.0"                                  
 rustyline = "16.0.0"                                
-self_update = { version = "0.42.0", features = ["archive-tar", "compression-flate2"] }
+
 
 [package.metadata.wix]
 upgrade-guid = "22823ED1-1376-4252-B220-FCFF406A2665"
