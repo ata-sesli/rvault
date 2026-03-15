@@ -1,213 +1,190 @@
-# 🔐 RVault - The Ultimate Secure Password Manager
+# RVault
 
-**Stop compromising your digital security with weak, reused passwords.** RVault is a blazing-fast, military-grade password manager built in Rust that keeps your credentials encrypted locally while delivering lightning-fast access. No cloud dependencies, no subscription fees, no data breaches - just pure, unadulterated security that you control.
+RVault is a local-first password manager written in Rust.
 
-## ✨ Features
+It stores encrypted credentials in a local SQLite database and can be used either through a command-line interface or an interactive terminal UI built with ratatui.
 
-- 🖥️ **Modern TUI** - A beautiful, responsive Terminal User Interface for easy management
-- 🔒 **Military-Grade Encryption** - ChaCha20-Poly1305 encryption with Argon2 key derivation
-- 🎨 **Theme System** - Choose from 8+ premium themes (Gruvbox, Catppuccin, Nord, etc.)
-- 📌 **Pinned Entries** - Keep your most important credentials at the top for instant access
-- 🔃 **Advanced Sorting** - Sort by time, platform, or user ID (ascending/descending)
-- 🎲 **Secure Generator** - Integrated password generator with visual progress bar
-- 📋 **Instant Clipboard** - Copy credentials with a single keypress or command
-- ⚡ **Rust-Powered** - Blazing-fast performance with zero-cost abstractions
-- 🏠 **Fully Local** - Your data never leaves your machine - no cloud, no leaks
-- 🏠 **Fully Local** - Your data never leaves your machine - no cloud, no leaks
-- 📦 **Multi-Vault** - Organize your life into different encrypted containers
+## What it does
 
-## 🖥️ Intelligent Terminal Interface (TUI)
+RVault stores credentials in a local SQLite database and encrypts each password before writing it to disk.
 
-RVault isn't just a command-line tool; it features a full-fledged, interactive terminal user interface designed for speed and usability.
+The project currently has two ways to use it:
 
-### **Seamless Navigation & Interaction**
+- `rvault` launches a `ratatui`-based terminal UI for browsing, adding, editing, deleting, pinning, and copying entries.
+- `rvault <subcommand>` exposes a few core operations from the shell, including setup, unlock, lock, create, add, get, remove, and password generation.
 
-- **Vim-like Keybindings**: Navigate lists with `j/k` or arrow keys for maximum efficiency.
-- **Smart Input Fields**: Text inputs support full cursor movement (Left/Right), insertion, and deletion, making edits precise and easy.
-- **Context-Aware Footer**: The help bar at the bottom dynamically updates to show relevant shortcuts for the current screen.
+Passwords are copied to the system clipboard rather than printed to stdout.
 
-### **Visual Feedback & Clarity**
+## Why this project exists
 
-- **Instant Toast Notifications**: Get immediate, non-intrusive feedback (e.g., "Password copied!") in the top-right corner.
-- **Rich Data Display**: View comprehensive details including Platform, User ID, and precise "Last Modified" timestamps (e.g., "March 24 2026 14:30").
-- **Pinned Entries**: Keep your most-used credentials at the top of the list, marked with a distinctive pin icon for instant recognition.
+RVault is built around a simple goal: keep password management local and scriptable without depending on a hosted service or browser extension.
 
-### **Enhanced Security Features**
+The codebase is structured as a Rust workspace, so the storage and crypto logic live in a reusable core crate while the TUI and CLI sit on top of it.
 
-- **Secure "Lock & Quit"**: Press `Shift+Q` anywhere in the app to immediately end your session and close the vault. This ensures your data is safe even if you step away.
-- **Visual Password Generation**: Watch your password being built in real-time with sliders for length and toggles for complexity.
-- **Hidden Inputs**: All sensitive fields (passwords, master key) are masked by default.
+## Demo
 
-## 🚀 Installation
+Demo video: [`rvault-v0.1.1-demo.webm`](./rvault-v0.1.1-demo.webm)
+
+<video src="./rvault-v0.1.1-demo.webm" controls muted playsinline>
+  Your browser does not support the video tag.
+</video>
+
+## Key features
+
+- Local-only storage under the OS-specific application data directory
+- Master-password setup with Argon2-based verification
+- Per-entry encryption using ChaCha20-Poly1305
+- Session-based unlock flow with automatic expiration
+- Terminal UI for day-to-day use
+- Built-in password generator
+- Clipboard copy for generated or retrieved passwords
+- Pinning and sorting in the TUI
+- Multiple vault tables in the underlying database via the CLI
+- Theme support in the TUI
+
+## Installation
+
+The easiest way to install RVault is from the GitHub Releases page:
+
+- Open: <https://github.com/ata-sesli/rvault/releases>
+- Download the archive or installer for your platform
+- Add the installed `rvault` binary to your `PATH` if your platform-specific package does not do that automatically
+
+If you prefer the release install scripts used by the project site, the current documented commands are:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v0.1.1/rvault-cli-installer.sh | sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v0.1.1/rvault-cli-installer.ps1 | iex"
+```
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/ata-sesli/rvault.git
 cd rvault
-# Option A: Install the binary to your Cargo bin (recommended)
-cargo install --path .
-
-# Option B: Build locally and run from target/
-cargo build --release
+cargo install --path crates/rvault-cli
 ```
 
-### 🖥️ Launching the TUI
+For local development:
 
-Simply run `rvault` without any arguments to enter the interactive mode:
+```bash
+cargo build --release
+cargo run -p rvault-cli
+```
+
+## Quick example
+
+First-time setup:
+
+```bash
+rvault setup
+```
+
+Unlock the vault for protected commands:
+
+```bash
+rvault unlock
+```
+
+Add a credential:
+
+```bash
+rvault add github alice:correct-horse-battery-staple
+```
+
+Retrieve a credential and copy it to the clipboard:
+
+```bash
+rvault get github alice
+```
+
+Launch the terminal UI:
 
 ```bash
 rvault
 ```
 
-### ⌨️ TUI Keyboard Shortcuts
+## TUI keybindings
 
-| Key         | Action                             |
-| ----------- | ---------------------------------- |
-| `↑/↓`       | Navigate through list              |
-| `Enter`     | Copy password to clipboard         |
-| `a`         | Add new entry                      |
-| `e`         | Edit password                      |
-| `d`         | Delete entry                       |
-| `p`         | Pin/Unpin entry                    |
-| `S`         | Open Sort Selection                |
-| `t`         | Change Theme                       |
-| `Tab`       | Switch between Vault and Generator |
-| `q` / `Esc` | Quit Application                   |
+These are the main bindings exposed by the current TUI implementation.
 
-### 🛠️ CLI Setup
+### Main table
 
-```bash
-# Create your master password and keystore (run once)
-rvault setup
-```
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move through entries |
+| `Enter` | Copy the selected password to the clipboard |
+| `a` | Add a new entry |
+| `e` | Edit the selected entry |
+| `d` | Delete the selected entry |
+| `p` | Pin or unpin the selected entry |
+| `S` | Open sort selection |
+| `t` | Open theme selection |
+| `Tab` | Switch to the password generator |
+| `q` / `Esc` | Quit |
+| `Shift+Q` | Lock and quit |
 
-### Unlock / Lock the Vault
+### Generator view
 
-```bash
-# Start a session (required for protected commands like create/add/get/remove)
-rvault unlock
+| Key | Action |
+| --- | --- |
+| `Left` / `Right` | Decrease or increase password length |
+| `s` | Toggle special characters |
+| `Enter` | Generate a password and copy it |
+| `Tab` | Return to the main table |
+| `q` / `Esc` | Quit |
 
-# When you’re done
-rvault lock
-```
+### Selection dialogs
 
-### Create a New Vault
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move through options |
+| `j` / `k` | Move through options in sort and theme selection |
+| `Enter` | Confirm |
+| `q` / `Esc` | Close the dialog |
 
-```bash
-# Create a vault for work credentials
-rvault create work_vault
+## How it works
 
-# Create personal vault (optional name - defaults to 'main')
-rvault create
-```
+RVault splits responsibilities across three crates:
 
-### Add Passwords
+- `rvault-core` handles config, keystore management, encryption, sessions, storage, and clipboard integration.
+- `rvault-cli` is the main binary and command parser.
+- `rvault-tui` provides the interactive terminal interface.
 
-```bash
-# Add to default vault
-rvault add instagram johndoe:super_secret_password
+At setup time, RVault hashes the master password and stores the hash in the config directory. It also generates a master encryption key and writes it to a local keystore file encrypted with a key derived from the master password.
 
-# Add to specific vault
-rvault add --vault work github jane.doe:my_github_token
-```
+When you unlock the vault, RVault decrypts that master encryption key and stores it in a session file with a timeout. Protected operations read the encryption key from the active session instead of prompting every time.
 
-### Instant Search & Retrieval
+Password entries are stored in SQLite. Each entry gets its own salt-derived key based on the current session key, and the encrypted password, nonce, and salt are stored with the row.
 
-```bash
-# Get password via CLI (copies to clipboard)
-rvault get instagram johndoe
-```
+## Limitations and trade-offs
 
-### Advanced Password Generation
+- The project is local-only. There is no sync, sharing, or remote backup layer.
+- The CLI surface is larger than the currently implemented command set. Some declared commands such as clipboard watching and export are not wired up yet.
+- The TUI works against the default vault table; multi-vault workflows are more visible in the CLI than in the UI.
+- Retrieved passwords are copied to the clipboard. If you want a different retrieval model, that would need code changes.
+- I could not fully verify a clean build in this environment because `cargo check` was blocked from downloading crates outside the sandbox.
 
-```bash
-# Generate 24-character password with special characters
-rvault generate --length 24 --special-characters
-```
+## Project structure
 
-## 🎨 Themes
+- `Cargo.toml`: workspace definition
+- `crates/rvault-core`: shared storage, crypto, config, keystore, session, and clipboard logic
+- `crates/rvault-cli`: CLI binary named `rvault`
+- `crates/rvault-tui`: terminal UI library and TUI-specific app state
 
-RVault comes with beautifully crafted themes to match your terminal setup:
+## Roadmap
 
-- **Gruvbox** (Default)
-- **Catppuccin**
-- **Dracula**
-- **Tokyo Night**
-- **Nord**
-- **One Dark**
-- **Solarized**
-- **Monokai**
+Possible near-term improvements based on the current code structure:
 
-## 🏗️ Project Structure
+- Finish or remove partially declared CLI commands
+- Improve multi-vault support in the TUI
+- Add import/export with a documented format
+- Add tests around storage migrations and session handling
+- Tighten README and CLI help so supported workflows are easier to discover
 
-The project is structured as a Rust workspace for maximum modularity:
+## License
 
-- `crates/rvault-core` - The engine: Cryptography, Database, and internal logic
-- `crates/rvault-tui` - The experience: Ratatui-based Terminal UI
-- `crates/rvault-cli` - The interface: Clap-based Command Line Interface
-
-## 🔧 Core Components
-
-### **CLI Interface** (`cli.rs`)
-
-- Built with `clap` for robust argument parsing
-- Supports subcommands for all vault operations
-- Comprehensive help system with usage examples
-
-### **Cryptography** (`crypto.rs`)
-
-- Secure password generation with customizable constraints
-- ChaCha20-Poly1305 encryption for vault contents
-- Argon2 key derivation for master password hashing
-
-### **Storage Engine** (`storage.rs`)
-
-- SQLite-based local storage for maximum reliability
-- Each vault is a separate table with encrypted entries
-- Automatic database creation and management
-
-### **Security Features**
-
-- All passwords encrypted at rest
-- Memory-safe Rust implementation
-- No network dependencies
-- Local-only operation
-
-## 🛠️ Dependencies
-
-- **Ratatui** - Modern TUI library for rich terminal interfaces
-- **Crossterm** - Terminal manipulation and event handling
-- **Clap** - Command-line argument parsing
-- **Rusqlite** - SQLite database interface
-- **Argon2** - Password hashing (Key Derivation)
-- **ChaCha20-Poly1305** - State-of-the-art encryption
-- **Chrono** - Time and date management
-- **Arboard** - Cross-platform clipboard access
-- **Directories** - OS-appropriate data locations
-
-## 🔒 Security Model
-
-RVault follows a **zero-trust, local-first** security model:
-
-1. **Master Password Protection** - All vaults are protected by a master password
-2. **Local Encryption** - Data is encrypted before being written to disk
-3. **Memory Safety** - Rust prevents buffer overflows and memory corruption
-4. **No Cloud Dependencies** - Your data never leaves your machine
-5. **Audit Trail** - All operations are logged for security monitoring
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contributing guidelines and:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License and Apache 2.0 License - see the [MIT-LICENSE](LICENSE-MIT.MD) or [APACHE-LICENSE](LICENSE-APACHE.MD) file for details.
-
-**Built with ⚡️ in Rust by [Ata Sesli](https://github.com/ata-sesli)**
-
-\*RVault: Because your passwords deserve better
+Dual-licensed under `MIT` or `Apache-2.0`.
