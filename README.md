@@ -23,11 +23,7 @@ The codebase is structured as a Rust workspace, so the storage and crypto logic 
 
 ## Demo
 
-Demo video: [`rvault-v0.1.1-demo.webm`](./rvault-v0.1.1-demo.webm)
-
-<video src="./rvault-v0.1.1-demo.webm" controls muted playsinline>
-  Your browser does not support the video tag.
-</video>
+https://github.com/user-attachments/assets/8d165491-0f6d-4da9-9a37-0c68e1f3dea2
 
 ## Key features
 
