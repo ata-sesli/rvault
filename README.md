@@ -166,7 +166,6 @@ Password entries are stored in SQLite. Each entry gets its own salt-derived key 
 - The CLI surface is larger than the currently implemented command set. Some declared commands such as clipboard watching and export are not wired up yet.
 - The TUI works against the default vault table; multi-vault workflows are more visible in the CLI than in the UI.
 - Retrieved passwords are copied to the clipboard. If you want a different retrieval model, that would need code changes.
-- I could not fully verify a clean build in this environment because `cargo check` was blocked from downloading crates outside the sandbox.
 
 ## Project structure
 
