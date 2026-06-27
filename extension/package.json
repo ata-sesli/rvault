@@ -1,0 +1,40 @@
+{
+  "name": "rvault-extension",
+  "displayName": "RVault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "plasmo": "^0.90.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.4"
+  },
+  "manifest": {
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxeqUqKARu/O10PNBTdVB+ZHHg2KdA0C8DQTw65gxodLMkhL3zFSCTRavtRpFq/glcI65wipR4+S+9bVy/B/JSEcLzEz1d15/8EDPxGSycu92xkxP7OK/eLU/hnJJjWYg9sDstuQFhiRixPpiPGwvYAgMMPhUbrX74Y5UjqRMhAmI982uugvUblp6SKx7EtXvYB0mJFztMsyxjRhYAnI5eEOjUskmDfODaWdYcSXmQApTCG1UQhTb+Gv/garaTV6YohdhEMGEdt939K93nttJOjzXcqQuCIuvdZJQADxDcNRaulEB0ZHzpKZLq61kQVWJc5YrPAdOGLKLnaCPJ+QldwIDAQAB",
+    "permissions": [
+      "nativeMessaging",
+      "activeTab",
+      "scripting"
+    ],
+    "host_permissions": [
+      "http://*/*",
+      "https://*/*"
+    ],
+    "action": {
+      "default_title": "RVault",
+      "default_popup": "./popup.html"
+    }
+  }
+}
