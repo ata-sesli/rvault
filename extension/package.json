@@ -26,7 +26,8 @@
     "permissions": [
       "nativeMessaging",
       "activeTab",
-      "scripting"
+      "scripting",
+      "clipboardWrite"
     ],
     "host_permissions": [
       "http://*/*",

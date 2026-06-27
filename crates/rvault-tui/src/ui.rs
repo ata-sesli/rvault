@@ -1,14 +1,19 @@
 use crate::app::{AddEntryStage, App, AppState, EditEntryStage, SetupStage, SortMode}; // Added EditEntryStage
 use crate::input::InputState; // Import InputState
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs},
+    widgets::{
+        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, List, ListItem, ListState,
+        Paragraph, Row, Table, TableState, Tabs,
+    },
 };
 use rvault_core::vault::VaultEntry;
+
+const PASSWORD_MASK_SYMBOL: &str = "•";
 
 #[derive(Clone)]
 pub struct Theme {
@@ -295,28 +300,41 @@ fn draw_auth(f: &mut Frame, input: &String, error: &Option<String>, theme: &Them
         .border_style(Style::default().fg(theme.accent))
         .style(Style::default().bg(theme.surface).fg(theme.text));
 
-    let mut text = vec![
-        Line::from(Span::styled("Password  ", Style::default().fg(theme.muted))),
-        Line::from(Span::styled(
-            "*".repeat(input.chars().count()),
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        )),
-    ];
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let title = Paragraph::new("Enter master password")
+        .style(Style::default().fg(theme.muted))
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(title, chunks[0]);
+
+    let input_state = InputState::with_value(input.clone());
+    draw_input_box(
+        f,
+        chunks[1],
+        "Password",
+        &input_state,
+        "",
+        true,
+        true,
+        theme,
+    );
 
     if let Some(err) = error {
-        text.push(Line::from(""));
-        text.push(Line::from(Span::styled(
-            err,
-            Style::default().fg(theme.error),
-        )));
+        let error_text = Paragraph::new(Span::styled(err, Style::default().fg(theme.error)))
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(error_text, chunks[2]);
     }
-
-    let p = Paragraph::new(text)
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
-
-    f.render_widget(Clear, area);
-    f.render_widget(p, area);
 }
 
 fn draw_setup(
@@ -342,40 +360,51 @@ fn draw_setup(
         SetupStage::ConfirmPassword => "Confirm Master Password",
     };
 
-    let input_vis = match stage {
-        SetupStage::EnterPassword => "*".repeat(password.chars().count()),
-        SetupStage::ConfirmPassword => "*".repeat(confirm.chars().count()),
+    let active_password = match stage {
+        SetupStage::EnterPassword => password,
+        SetupStage::ConfirmPassword => confirm,
     };
 
-    let mut text = vec![
-        Line::from(Span::styled(
-            stage_text,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled("Password", Style::default().fg(theme.muted))),
-        Line::from(Span::styled(
-            input_vis,
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        )),
-    ];
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let stage_title = Paragraph::new(Span::styled(
+        stage_text,
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    ))
+    .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(stage_title, chunks[0]);
+
+    let input_state = InputState::with_value(active_password.clone());
+    draw_input_box(
+        f,
+        chunks[2],
+        "Password",
+        &input_state,
+        "",
+        true,
+        true,
+        theme,
+    );
 
     if let Some(err) = error {
-        text.push(Line::from(""));
-        text.push(Line::from(Span::styled(
-            err,
-            Style::default().fg(theme.error),
-        )));
+        let error_text = Paragraph::new(Span::styled(err, Style::default().fg(theme.error)))
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(error_text, chunks[3]);
     }
-
-    let p = Paragraph::new(text)
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
-
-    f.render_widget(Clear, area);
-    f.render_widget(p, area);
 }
 
 fn draw_main(
@@ -425,57 +454,67 @@ fn draw_main(
         f.render_widget(p, area);
     }
 
-    let list_items: Vec<ListItem> = items
+    let rows: Vec<Row> = items
         .iter()
         .map(|entry| {
-            let pin_icon = if entry.pinned { "📌 " } else { "   " };
-            ListItem::new(vec![Line::from(vec![
-                Span::styled(pin_icon, Style::default().fg(theme.warning)),
-                Span::styled(
-                    format!("{:<20}", entry.platform),
-                    Style::default().fg(theme.text),
-                ),
-                Span::styled(" │ ", Style::default().fg(theme.muted)),
-                Span::styled(
-                    format!("{:<25}", &entry.user_id),
-                    Style::default().fg(theme.text),
-                ),
-                Span::styled(" │ ", Style::default().fg(theme.muted)),
-                Span::styled(
-                    if entry.updated_at > 0 {
-                        let dt = DateTime::from_timestamp(entry.updated_at, 0).unwrap_or_default();
-                        let local_dt: DateTime<Local> = DateTime::from(dt);
-                        format!("{}", local_dt.format("%B %d %Y %H:%M"))
-                    } else {
-                        "Unknown".to_string()
-                    },
-                    Style::default().fg(theme.muted),
-                ),
-            ])])
+            let platform = if entry.pinned {
+                format!("📌 {}", entry.platform)
+            } else {
+                entry.platform.clone()
+            };
+
+            Row::new(vec![
+                Cell::new(platform).style(Style::default().fg(theme.text)),
+                Cell::new(entry.user_id.clone()).style(Style::default().fg(theme.text)),
+                Cell::new(format_updated_at(entry.updated_at))
+                    .style(Style::default().fg(theme.muted)),
+            ])
         })
         .collect();
 
-    let list = List::new(list_items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme.muted))
-                .title(Span::styled(
-                    " Entries ",
-                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-                )),
-        )
-        .style(Style::default().bg(theme.bg))
-        .highlight_style(
+    let header = Row::new(vec!["Platform", "Username", "Last Update Date"])
+        .style(
             Style::default()
-                .bg(theme.accent)
-                .fg(theme.bg)
+                .fg(theme.muted)
                 .add_modifier(Modifier::BOLD),
-        ) // Accent bg, dark text
-        .highlight_symbol("  ");
+        )
+        .bottom_margin(1);
 
-    f.render_stateful_widget(list, chunks[1], list_state);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme.muted))
+            .title(Span::styled(
+                " Entries ",
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            )),
+    )
+    .style(Style::default().bg(theme.bg))
+    .row_highlight_style(
+        Style::default()
+            .bg(theme.accent)
+            .fg(theme.bg)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_spacing(HighlightSpacing::Never)
+    .column_spacing(3);
+
+    let mut table_state = TableState::new()
+        .with_offset(list_state.offset())
+        .with_selected(list_state.selected());
+    f.render_stateful_widget(table, chunks[1], &mut table_state);
+    *list_state.offset_mut() = table_state.offset();
+    *list_state.selected_mut() = table_state.selected();
 
     draw_help(
         f,
@@ -483,6 +522,16 @@ fn draw_main(
         "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Edit: e | Delete: d | Switch Tab: Tab | Themes: t | Sort: S | Lock: Q | Quit: q",
         theme,
     );
+}
+
+fn format_updated_at(updated_at: i64) -> String {
+    if updated_at > 0 {
+        let dt = DateTime::from_timestamp(updated_at, 0).unwrap_or_default();
+        let local_dt: DateTime<Local> = DateTime::from(dt);
+        format!("{}", local_dt.format("%B %d %Y %H:%M"))
+    } else {
+        "Unknown".to_string()
+    }
 }
 
 fn draw_generator(f: &mut Frame, gen_length: u8, gen_special: bool, theme: &Theme) {
@@ -889,36 +938,147 @@ fn draw_input_box(
     let value = &state.value;
     let cursor_pos = state.cursor_position;
 
-    // Determine visual content
-    let (display_text, cursor_offset) = if mask {
-        (
-            "*".repeat(value.chars().count()),
-            value[..cursor_pos].chars().count() as u16,
-        )
-    } else {
-        // If active, show cursor.
-        (
-            value.clone(),
-            Span::raw(&value[..cursor_pos]).width() as u16,
-        )
-    };
-
+    let mut cursor_offset = 0;
     let content = if value.is_empty() && !active {
-        Span::styled(placeholder, Style::default().fg(theme.muted))
+        Line::from(Span::styled(placeholder, Style::default().fg(theme.muted)))
+    } else if mask && active {
+        let before_cursor = value[..cursor_pos].chars().count();
+        let after_cursor = value[cursor_pos..].chars().count();
+        Line::from(vec![
+            Span::styled(
+                PASSWORD_MASK_SYMBOL.repeat(before_cursor),
+                Style::default().fg(theme.text),
+            ),
+            Span::styled(
+                "▏",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                PASSWORD_MASK_SYMBOL.repeat(after_cursor),
+                Style::default().fg(theme.text),
+            ),
+        ])
+    } else if mask {
+        Line::from(Span::styled(
+            PASSWORD_MASK_SYMBOL.repeat(value.chars().count()),
+            Style::default().fg(theme.text),
+        ))
     } else {
-        Span::styled(display_text, Style::default().fg(theme.text))
+        cursor_offset = Span::raw(&value[..cursor_pos]).width() as u16;
+        Line::from(Span::styled(value.clone(), Style::default().fg(theme.text)))
     };
 
     let p = Paragraph::new(content).block(block);
     f.render_widget(p, area);
 
-    // Draw Cursor if active
-    if active {
-        // Calculate cursor screen position
-        // Input box inner area is area.x+1, area.y+1
-        // We need to clamp cursor to visible width if scrolling (not implemented yet, assuming short inputs)
+    if active && !mask {
         let cursor_x = area.x + 1 + cursor_offset;
         let cursor_y = area.y + 1;
         f.set_cursor_position((cursor_x, cursor_y));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn auth_screen_renders_password_in_a_nested_input_box() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let theme = Theme::catppuccin();
+        let input = "abc".to_string();
+
+        terminal
+            .draw(|f| draw_auth(f, &input, &None, &theme))
+            .expect("draw auth");
+
+        let symbols = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(symbols.contains("•••"));
+        assert!(!symbols.contains("***"));
+        assert!(!symbols.contains("abc"));
+        assert!(symbols.matches('╭').count() >= 2);
+    }
+
+    #[test]
+    fn entries_render_date_column_at_same_x_for_each_row() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).expect("test terminal");
+        let theme = Theme::catppuccin();
+        let mut list_state = ListState::default();
+        let items = vec![
+            test_entry("practicetestautomation.com", "ata"),
+            test_entry("Gmail", "atasesli05@gmail.com"),
+        ];
+
+        terminal
+            .draw(|f| draw_main(f, &items, &mut list_state, &None, &theme))
+            .expect("draw main");
+
+        let lines = buffer_lines(&terminal);
+        let rendered = lines.join("\n");
+        let unknown_positions: Vec<usize> = lines
+            .into_iter()
+            .filter_map(|line| line.find("Unknown"))
+            .collect();
+
+        assert_eq!(unknown_positions.len(), 2);
+        assert_eq!(unknown_positions[0], unknown_positions[1]);
+        assert!(rendered.contains("Platform"));
+        assert!(rendered.contains("Username"));
+        assert!(rendered.contains("Last Update Date"));
+    }
+
+    #[test]
+    fn masked_password_input_uses_bullet_mask_and_inline_cursor() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let theme = Theme::catppuccin();
+        let input = "abc".to_string();
+
+        terminal
+            .draw(|f| draw_auth(f, &input, &None, &theme))
+            .expect("draw auth");
+
+        let symbols = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(symbols.contains("•••▏"));
+        assert!(!symbols.contains("***"));
+    }
+
+    fn test_entry(platform: &str, user_id: &str) -> VaultEntry {
+        VaultEntry {
+            platform: platform.to_string(),
+            user_id: user_id.to_string(),
+            password: "password".to_string(),
+            salt: None,
+            nonce: None,
+            pinned: false,
+            id: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn buffer_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        buffer
+            .content()
+            .chunks(buffer.area.width as usize)
+            .map(|cells| cells.iter().map(|cell| cell.symbol()).collect())
+            .collect()
     }
 }
