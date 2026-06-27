@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, HighlightSpacing, List, ListItem, ListState,
         Paragraph, Row, Table, TableState, Tabs,
@@ -465,40 +465,55 @@ fn draw_main(
 
             Row::new(vec![
                 Cell::new(platform).style(Style::default().fg(theme.text)),
-                Cell::new(entry.user_id.clone()).style(Style::default().fg(theme.text)),
-                Cell::new(format_updated_at(entry.updated_at))
+                Cell::new(Text::from(entry.user_id.clone()).centered())
+                    .style(Style::default().fg(theme.text)),
+                Cell::new(Text::from(format_updated_at(entry.updated_at)).right_aligned())
                     .style(Style::default().fg(theme.muted)),
             ])
         })
         .collect();
 
-    let header = Row::new(vec!["Platform", "Username", "Last Update Date"])
-        .style(
-            Style::default()
-                .fg(theme.muted)
-                .add_modifier(Modifier::BOLD),
-        )
-        .bottom_margin(1);
+    let header = Row::new(vec![
+        Cell::new("Platform"),
+        Cell::new(Text::from("Username").centered()),
+        Cell::new(Text::from("Last Update Date").right_aligned()),
+    ])
+    .style(
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )
+    .bottom_margin(1);
+
+    let entries_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.muted))
+        .title(Span::styled(
+            " Entries ",
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        ));
+    let entries_inner = entries_block.inner(chunks[1]);
+    f.render_widget(entries_block, chunks[1]);
+
+    let table_area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Fill(1),
+            Constraint::Length(3),
+        ])
+        .split(entries_inner)[1];
 
     let table = Table::new(
         rows,
         [
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(1, 3),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.muted))
-            .title(Span::styled(
-                " Entries ",
-                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-            )),
-    )
     .style(Style::default().bg(theme.bg))
     .row_highlight_style(
         Style::default()
@@ -506,13 +521,12 @@ fn draw_main(
             .fg(theme.bg)
             .add_modifier(Modifier::BOLD),
     )
-    .highlight_spacing(HighlightSpacing::Never)
-    .column_spacing(3);
+    .highlight_spacing(HighlightSpacing::Never);
 
     let mut table_state = TableState::new()
         .with_offset(list_state.offset())
         .with_selected(list_state.selected());
-    f.render_stateful_widget(table, chunks[1], &mut table_state);
+    f.render_stateful_widget(table, table_area, &mut table_state);
     *list_state.offset_mut() = table_state.offset();
     *list_state.selected_mut() = table_state.selected();
 
@@ -1025,13 +1039,17 @@ mod tests {
 
         let lines = buffer_lines(&terminal);
         let rendered = lines.join("\n");
-        let unknown_positions: Vec<usize> = lines
-            .into_iter()
-            .filter_map(|line| line.find("Unknown"))
-            .collect();
+        let platform_x = find_cell_positions(&terminal, "Platform")[0];
+        let username_x = find_cell_positions(&terminal, "Username")[0];
+        let updated_at_x = find_cell_positions(&terminal, "Last Update Date")[0];
+        let unknown_positions = find_cell_positions(&terminal, "Unknown");
 
+        assert!(platform_x >= 3);
+        assert!((50..=65).contains(&username_x));
+        assert!(updated_at_x + "Last Update Date".chars().count() <= 117);
         assert_eq!(unknown_positions.len(), 2);
         assert_eq!(unknown_positions[0], unknown_positions[1]);
+        assert!(unknown_positions.iter().all(|x| *x > 100));
         assert!(rendered.contains("Platform"));
         assert!(rendered.contains("Username"));
         assert!(rendered.contains("Last Update Date"));
@@ -1079,6 +1097,31 @@ mod tests {
             .content()
             .chunks(buffer.area.width as usize)
             .map(|cells| cells.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    fn find_cell_positions(terminal: &Terminal<TestBackend>, needle: &str) -> Vec<usize> {
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        let needle: Vec<String> = needle.chars().map(|c| c.to_string()).collect();
+
+        buffer
+            .content()
+            .chunks(width)
+            .flat_map(|cells| {
+                if needle.len() > cells.len() {
+                    return Vec::new();
+                }
+
+                (0..=cells.len() - needle.len())
+                    .filter(|x| {
+                        needle
+                            .iter()
+                            .enumerate()
+                            .all(|(offset, symbol)| cells[*x + offset].symbol() == symbol)
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 }

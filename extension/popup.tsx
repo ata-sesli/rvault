@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import {
+  ArrowDown,
+  ArrowUp,
+  CalendarClock,
   CheckCircle2,
   Copy,
   KeyRound,
@@ -28,9 +31,11 @@ import { logoSrcFromDataBase64Import } from "./lib/logo"
 import {
   getDetailTitle,
   isDetailMode,
+  nextSortState,
   sortEntries,
   type PopupMode,
-  type SortKey
+  type SortKey,
+  type SortState
 } from "./lib/popup-state"
 import logoDataUrl from "data-base64:./assets/icon.png"
 
@@ -58,7 +63,7 @@ function Popup() {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [masterPassword, setMasterPassword] = useState("")
   const [query, setQuery] = useState("")
-  const [sortBy, setSortBy] = useState<SortKey>("platform")
+  const [sort, setSort] = useState<SortState>({ key: "platform", direction: "asc" })
   const [entries, setEntries] = useState<VaultEntry[]>([])
   const [selected, setSelected] = useState<VaultEntry | null>(null)
   const [menuEntry, setMenuEntry] = useState<VaultEntry | null>(null)
@@ -69,7 +74,7 @@ function Popup() {
   const [form, setForm] = useState<DetectedForm | null>(null)
 
   const canSave = platform.trim() && userId.trim() && password
-  const sortedEntries = useMemo(() => sortEntries(entries, sortBy), [entries, sortBy])
+  const sortedEntries = useMemo(() => sortEntries(entries, sort), [entries, sort])
 
   useEffect(() => {
     void refreshStatus()
@@ -300,7 +305,7 @@ function Popup() {
 
   function clearUnlockedState() {
     setMasterPassword("")
-    setSortBy("platform")
+    setSort({ key: "platform", direction: "asc" })
     setEntries([])
     setSelected(null)
     setMenuEntry(null)
@@ -319,6 +324,10 @@ function Popup() {
     setMenuEntry((current) =>
       current && entryKey(current) === entryKey(entry) ? null : entry
     )
+  }
+
+  function updateSort(key: SortKey) {
+    setSort((current) => nextSortState(current, key))
   }
 
   const title = useMemo(() => {
@@ -400,16 +409,35 @@ function Popup() {
                 <RefreshCw size={15} />
               </button>
             </div>
-            <label className="sort-control">
-              <span>Sort</span>
-              <select
-                value={sortBy}
-                onChange={(event) => setSortBy(event.currentTarget.value as SortKey)}
+            <div className="sort-buttons" aria-label="Sort entries">
+              <button
+                className={sort.key === "platform" ? "active" : ""}
+                title="Sort by platform"
+                onClick={() => updateSort("platform")}
               >
-                <option value="platform">Platform</option>
-                <option value="email">Email</option>
-              </select>
-            </label>
+                <KeyRound size={13} />
+                Platform
+                <SortArrow active={sort.key === "platform"} direction={sort.direction} />
+              </button>
+              <button
+                className={sort.key === "username" ? "active" : ""}
+                title="Sort by username"
+                onClick={() => updateSort("username")}
+              >
+                <UserRound size={13} />
+                Username
+                <SortArrow active={sort.key === "username"} direction={sort.direction} />
+              </button>
+              <button
+                className={sort.key === "updatedAt" ? "active" : ""}
+                title="Sort by date last updated"
+                onClick={() => updateSort("updatedAt")}
+              >
+                <CalendarClock size={13} />
+                Updated
+                <SortArrow active={sort.key === "updatedAt"} direction={sort.direction} />
+              </button>
+            </div>
           </section>
 
           {form ? (
@@ -566,6 +594,20 @@ function entryKey(entry: VaultEntry): string {
   return `${entry.platform}:${entry.userId}`
 }
 
+function SortArrow({
+  active,
+  direction
+}: {
+  active: boolean
+  direction: SortState["direction"]
+}) {
+  if (!active) {
+    return <span className="sort-arrow-placeholder" />
+  }
+
+  return direction === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+}
+
 const styles = `
   :root {
     color-scheme: dark;
@@ -640,7 +682,7 @@ const styles = `
     font-weight: 700;
     color: var(--rv-muted);
   }
-  input, select {
+  input {
     width: 100%;
     height: 34px;
     box-sizing: border-box;
@@ -650,14 +692,6 @@ const styles = `
     background: #08111e;
     color: var(--rv-text);
     font-size: 13px;
-  }
-  select {
-    appearance: none;
-    padding-right: 22px;
-    background-image: linear-gradient(45deg, transparent 50%, var(--rv-muted) 50%), linear-gradient(135deg, var(--rv-muted) 50%, transparent 50%);
-    background-position: calc(100% - 12px) 14px, calc(100% - 7px) 14px;
-    background-size: 5px 5px, 5px 5px;
-    background-repeat: no-repeat;
   }
   input::placeholder {
     color: var(--rv-muted-2);
@@ -748,9 +782,7 @@ const styles = `
   }
   .list-controls {
     display: grid;
-    grid-template-columns: 1fr 94px;
-    gap: 8px;
-    align-items: end;
+    gap: 7px;
   }
   .search-row {
     display: grid;
@@ -777,19 +809,28 @@ const styles = `
     background: transparent;
     color: var(--rv-muted);
   }
-  .sort-control {
-    gap: 3px;
-    margin-bottom: 0;
+  .sort-buttons {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
   }
-  .sort-control span {
-    color: var(--rv-muted-2);
-    font-size: 10px;
-    line-height: 1;
+  .sort-buttons button {
+    height: 28px;
+    min-width: 0;
+    padding: 0 7px;
+    border: 1px solid var(--rv-border);
+    color: var(--rv-muted);
+    font-size: 11px;
+    gap: 4px;
   }
-  .sort-control select {
-    height: 34px;
-    font-size: 12px;
-    padding-left: 8px;
+  .sort-buttons button.active {
+    border-color: rgba(88, 214, 255, .42);
+    color: var(--rv-text);
+    background: rgba(88, 214, 255, .08);
+  }
+  .sort-arrow-placeholder {
+    width: 12px;
+    height: 12px;
   }
   .form-strip {
     display: flex;
