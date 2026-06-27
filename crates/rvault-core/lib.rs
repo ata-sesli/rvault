@@ -2,8 +2,8 @@
 // This file declares all the modules containing the shared security and data logic.
 
 // Configuration and Error Handling
-pub mod error;
 pub mod config;
+pub mod error;
 
 // Cryptography and Key Management
 pub mod crypto;
@@ -22,11 +22,11 @@ pub mod watcher; // Based on your file list, this seems to be included
 // If watcher.rs doesn't exist, remove this line.
 
 // Re-export common types for easier access in other crates (CLI/GUI)
-pub use error::{ConfigError, DatabaseError}; 
-pub use vault::VaultEntry; 
+pub use error::{ConfigError, DatabaseError};
+pub use vault::VaultEntry;
 
 /// Locks the vault by ending the current session.
 /// This does NOT clear the clipboard contents, per user preference.
 pub fn lock() -> Result<(), String> {
     session::end_session()
-} 
+}

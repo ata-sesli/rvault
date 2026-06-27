@@ -20,6 +20,8 @@ rvault-tui = { path = "../rvault-tui" }
 clap = { version = "4.5.41", features = ["derive"] }
 rpassword = "7.4.0"                                  
 rustyline = "16.0.0"                                
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
 
 
 [package.metadata.wix]

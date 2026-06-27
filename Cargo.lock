@@ -1825,6 +1825,8 @@ dependencies = [
  "rustyline",
  "rvault-core",
  "rvault-tui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

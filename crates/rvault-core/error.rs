@@ -1,21 +1,22 @@
-
 use thiserror::Error;
 
-#[derive(Error,Debug)]
-pub enum DatabaseError{
+#[derive(Error, Debug)]
+pub enum DatabaseError {
     #[error("Path Error")]
     Path,
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("SQLite Error: {0}")]
-    Sqlite(#[from] rusqlite::Error)
+    Sqlite(#[from] rusqlite::Error),
+    #[error("Crypto Error: {0}")]
+    Crypto(String),
 }
-#[derive(Error,Debug)]
-pub enum ConfigError{
+#[derive(Error, Debug)]
+pub enum ConfigError {
     #[error("Path Error")]
     Path,
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON Error: {0}")]
-    Json(#[from] serde_json::Error)
+    Json(#[from] serde_json::Error),
 }

@@ -1,14 +1,14 @@
-use std::path::PathBuf;
-use std::{fs, path::Path};
 use crate::crypto::{decrypt_with_key, encrypt_with_key, generate_key};
-use argon2::{Algorithm, Params, Version};
 use argon2::Argon2;
-use base64::prelude::*;
+use argon2::{Algorithm, Params, Version};
 use base64::engine::general_purpose::STANDARD as Base64;
+use base64::prelude::*;
+use chacha20poly1305::Key;
 use directories::ProjectDirs;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use chacha20poly1305::Key;
+use std::path::PathBuf;
+use std::{fs, path::Path};
 use zeroize::Zeroize;
 
 const MAGIC: &str = "RVAULT";
@@ -20,9 +20,9 @@ const NONCE_LEN: usize = 12;
 
 #[derive(Serialize, Deserialize)]
 struct KdfParams {
-    t: u32,       // iterations
-    m: u32,       // memory (KiB)
-    p: u32,       // parallelism
+    t: u32, // iterations
+    m: u32, // memory (KiB)
+    p: u32, // parallelism
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,14 +46,10 @@ pub fn keystore_path() -> Result<PathBuf, String> {
     }
 }
 
-fn derive_kek(
-    master_password: &[u8],
-    salt: &[u8],
-    k: &KdfParams,
-) -> Result<Key, String> {
+fn derive_kek(master_password: &[u8], salt: &[u8], k: &KdfParams) -> Result<Key, String> {
     // Output length = 32 bytes (for ChaCha20Poly1305 key)
-    let params = Params::new(k.m, k.t, k.p, Some(EK_LEN))
-        .map_err(|e| format!("Argon2 params: {e}"))?;
+    let params =
+        Params::new(k.m, k.t, k.p, Some(EK_LEN)).map_err(|e| format!("Argon2 params: {e}"))?;
     let a2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut out = [0u8; EK_LEN];
@@ -73,15 +69,18 @@ pub fn create_key_vault(master_password: &str, path: &Path) -> Result<(), String
 
     let mut kek = [0u8; EK_LEN];
     let argon2 = Argon2::default();
-    let _ = argon2.hash_password_into(master_password.as_bytes(), &salt, &mut kek)
+    let _ = argon2
+        .hash_password_into(master_password.as_bytes(), &salt, &mut kek)
         .map_err(|_| "Failed to derive key.".to_string())?;
-    
+
     // 3. Encrypt the MEK using the KEK.
     let (ciphertext_b64, nonce_b64) = encrypt_with_key(&kek, &mek.as_bytes())?;
 
     // 4) Write raw: [salt][nonce][ct]
     let nonce = Base64.decode(&nonce_b64).map_err(|e| e.to_string())?;
-    if nonce.len() != NONCE_LEN { return Err("Unexpected nonce length".into()); }
+    if nonce.len() != NONCE_LEN {
+        return Err("Unexpected nonce length".into());
+    }
     let ct = Base64.decode(&ciphertext_b64).map_err(|e| e.to_string())?;
 
     let mut out = Vec::with_capacity(SALT_LEN + NONCE_LEN + ct.len());
@@ -113,12 +112,15 @@ pub fn load_key_from_vault(master_password: &str, path: &Path) -> Result<[u8; EK
     // 2. Re-derive the Key Encryption Key (KEK) from the password and salt.
     let mut kek = [0u8; EK_LEN];
     let argon2 = Argon2::default();
-    argon2.hash_password_into(master_password.as_bytes(), salt, &mut kek)
+    argon2
+        .hash_password_into(master_password.as_bytes(), salt, &mut kek)
         .map_err(|_| "Failed to derive key.".to_string())?;
 
     // 3. Decrypt the MEK using the KEK.
     let mek_json = decrypt_with_key(&kek, &encrypted_mek_b64, &nonce_b64)?;
     let mek_bytes = Base64.decode(mek_json).map_err(|e| e.to_string())?;
 
-    mek_bytes.try_into().map_err(|_| "Decrypted key has incorrect length.".to_string())
+    mek_bytes
+        .try_into()
+        .map_err(|_| "Decrypted key has incorrect length.".to_string())
 }

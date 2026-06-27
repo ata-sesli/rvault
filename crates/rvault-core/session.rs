@@ -1,26 +1,34 @@
+use crate::config::Config;
+use directories::ProjectDirs;
+use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::rng;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use rand::rng;
-use rand::{Rng};
-use rand::distr::Alphanumeric;
-use directories::ProjectDirs;
 use std::time::Duration;
 use std::time::SystemTime;
-use crate::config::Config;
+
+const CURRENT_SESSION_FILE: &str = "current";
+const BROWSER_SESSION_FILE: &str = "browser-current";
 
 /// Returns the path to the secure directory used for session files.
 fn get_session_dir() -> Result<PathBuf, std::io::Error> {
     if let Some(proj_dirs) = ProjectDirs::from("io.github", "ata-sesli", "RVault") {
         // Use a runtime-specific directory if available, otherwise cache.
-        let runtime_dir = proj_dirs.runtime_dir().unwrap_or_else(|| proj_dirs.cache_dir());
+        let runtime_dir = proj_dirs
+            .runtime_dir()
+            .unwrap_or_else(|| proj_dirs.cache_dir());
         let session_dir = runtime_dir.join("sessions");
 
         fs::create_dir_all(&session_dir)?;
         Ok(session_dir)
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Could not find project directories"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Could not find project directories",
+        ))
     }
 }
 
@@ -34,7 +42,7 @@ pub fn start_session(encryption_key: &[u8]) -> Result<String, std::io::Error> {
         .take(48) // A long, random string for the token
         .map(char::from)
         .collect();
-    
+
     let session_file_path = session_dir.join(&session_token);
 
     // Create the file and write the key to it.
@@ -48,7 +56,7 @@ pub fn start_session(encryption_key: &[u8]) -> Result<String, std::io::Error> {
         perms.set_mode(0o600); // Read/Write for owner, no access for others.
         fs::set_permissions(&session_file_path, perms)?;
     }
-    
+
     file.write_all(encryption_key)?;
     Ok(session_token)
 }
@@ -57,26 +65,29 @@ pub fn start_session(encryption_key: &[u8]) -> Result<String, std::io::Error> {
 pub fn get_key_from_session() -> Result<Vec<u8>, String> {
     // 1. Load the configuration at runtime.
     let config = Config::new().map_err(|e| format!("Failed to load config: {}", e))?;
-    
+
     // 2. Create the timeout duration from the config value.
-    let session_timeout = Duration::from_secs(config.session_timeout.parse::<u64>().unwrap_or(15) * 60);
+    let session_timeout =
+        Duration::from_secs(config.session_timeout.parse::<u64>().unwrap_or(15) * 60);
     let token = read_current()?;
-        
-    let session_dir = get_session_dir()
-        .map_err(|e| format!("Error accessing session directory: {}", e))?;
-    
+
+    let session_dir =
+        get_session_dir().map_err(|e| format!("Error accessing session directory: {}", e))?;
+
     let session_file_path = session_dir.join(&token);
 
     if session_file_path.exists() {
         // Get the file's metadata to check its timestamp
         let metadata = fs::metadata(&session_file_path)
             .map_err(|e| format!("Failed to read session metadata: {}", e))?;
-        
-        let modified_time = metadata.modified()
+
+        let modified_time = metadata
+            .modified()
             .map_err(|e| format!("Failed to get session timestamp: {}", e))?;
 
         // Calculate how long ago the session file was created/modified
-        let age = SystemTime::now().duration_since(modified_time)
+        let age = SystemTime::now()
+            .duration_since(modified_time)
             .map_err(|_| "System clock error.".to_string())?;
 
         // Check if the session has expired
@@ -88,8 +99,7 @@ pub fn get_key_from_session() -> Result<Vec<u8>, String> {
         }
 
         // If not expired, read the key from the file
-        fs::read(session_file_path)
-            .map_err(|e| format!("Failed to read session key: {}", e))
+        fs::read(session_file_path).map_err(|e| format!("Failed to read session key: {}", e))
     } else {
         Err("Vault is locked. Invalid or expired session.".to_string())
     }
@@ -97,9 +107,10 @@ pub fn get_key_from_session() -> Result<Vec<u8>, String> {
 
 /// Ends the current session by deleting the session file.
 pub fn end_session() -> Result<(), String> {
+    let _ = end_browser_session();
     let token = read_current()?;
-    let session_dir = get_session_dir()
-        .map_err(|e| format!("Error accessing session directory: {}", e))?;
+    let session_dir =
+        get_session_dir().map_err(|e| format!("Error accessing session directory: {}", e))?;
 
     let session_file_path = session_dir.join(token);
 
@@ -107,21 +118,88 @@ pub fn end_session() -> Result<(), String> {
         fs::remove_file(session_file_path)
             .map_err(|e| format!("Failed to remove session file: {}", e))?;
     }
-    let current_file_path = session_dir.join("current");
+    let current_file_path = session_dir.join(CURRENT_SESSION_FILE);
     if current_file_path.exists() {
         let _ = fs::remove_file(current_file_path);
     }
-    
+
     Ok(())
 }
 pub fn write_current(token: &str) -> Result<(), String> {
-    let p = get_session_dir().map_err(|e| e.to_string())?.join("current");
+    let p = get_session_dir()
+        .map_err(|e| e.to_string())?
+        .join(CURRENT_SESSION_FILE);
     std::fs::write(p, token).map_err(|e| format!("Failed to write current token: {e}"))
 }
 pub fn read_current() -> Result<String, String> {
-    let p = get_session_dir().map_err(|e| e.to_string())?.join("current");
+    let p = get_session_dir()
+        .map_err(|e| e.to_string())?
+        .join(CURRENT_SESSION_FILE);
     Ok(std::fs::read_to_string(p)
         .map_err(|e| format!("No active session to lock: {e}"))?
         .trim()
         .to_string())
+}
+
+pub fn start_browser_session(token: &str) -> Result<(), String> {
+    let p = get_session_dir()
+        .map_err(|e| e.to_string())?
+        .join(BROWSER_SESSION_FILE);
+    std::fs::write(p, token).map_err(|e| format!("Failed to write browser session token: {e}"))
+}
+
+pub fn end_browser_session() -> Result<(), String> {
+    let p = get_session_dir()
+        .map_err(|e| e.to_string())?
+        .join(BROWSER_SESSION_FILE);
+    if p.exists() {
+        std::fs::remove_file(p)
+            .map_err(|e| format!("Failed to remove browser session token: {e}"))?;
+    }
+    Ok(())
+}
+
+pub fn browser_session_is_active() -> bool {
+    get_key_from_browser_session().is_ok()
+}
+
+pub fn get_key_from_browser_session() -> Result<Vec<u8>, String> {
+    let current_token = read_current()?;
+    let browser_token = read_browser_current()?;
+    if !browser_session_tokens_match(&current_token, &browser_token) {
+        return Err("Vault is locked in the browser extension.".to_string());
+    }
+    get_key_from_session()
+}
+
+fn read_browser_current() -> Result<String, String> {
+    let p = get_session_dir()
+        .map_err(|e| e.to_string())?
+        .join(BROWSER_SESSION_FILE);
+    Ok(std::fs::read_to_string(p)
+        .map_err(|e| format!("No active browser session: {e}"))?
+        .trim()
+        .to_string())
+}
+
+fn browser_session_tokens_match(current_token: &str, browser_token: &str) -> bool {
+    !current_token.is_empty() && current_token == browser_token
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_session_requires_matching_current_token() {
+        assert!(browser_session_tokens_match(
+            "current-token",
+            "current-token"
+        ));
+        assert!(!browser_session_tokens_match(
+            "current-token",
+            "other-token"
+        ));
+        assert!(!browser_session_tokens_match("current-token", ""));
+    }
 }

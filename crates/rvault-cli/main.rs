@@ -1,16 +1,24 @@
 mod cli;
+mod extension_api;
+mod host;
+mod native;
 
-use clap::Parser;
 use crate::cli::{Cli, Commands};
+use clap::Parser;
 
 // Import everything needed from the new library
-use rvault_core::{
-    clipboard, config, crypto, keystore, session, storage, vault,
-    storage::{Database, Table},
-};
-use rvault_core::keystore::keystore_path; // Special case import for path
+use rvault_core::keystore::keystore_path;
+use rvault_core::{clipboard, config, crypto, keystore, session, storage, storage::Table, vault}; // Special case import for path
 
 fn main() {
+    let first_arg = std::env::args().nth(1);
+    if host::is_native_messaging_launch(first_arg.as_deref()) {
+        if let Err(e) = native::serve_stdio() {
+            eprintln!("RVault native host error: {e}");
+        }
+        return;
+    }
+
     let args = Cli::parse();
     // If no command is provided, launch TUI
     if args.command.is_none() {
@@ -21,8 +29,21 @@ fn main() {
     }
     let command = args.command.unwrap();
 
+    if let Commands::Browser { command } = &command {
+        if let Err(e) = host::handle_browser_command(command) {
+            eprintln!("Error: {e}");
+        }
+        return;
+    }
+
+    if let Commands::Host { command } = &command {
+        if let Err(e) = host::handle_host_command(command) {
+            eprintln!("Error: {e}");
+        }
+        return;
+    }
+
     let mut config = config::Config::new().unwrap();
-    let stored_hash = config.master_password_hash.as_ref().unwrap();
     // The 'Setup' command is special and can be run at any time.
     let is_protected_command = match &command {
         Commands::Setup {} => {
@@ -31,14 +52,18 @@ fn main() {
                 return;
             }
             println!("Setting up RVault for the first time...");
-            let master_password = rpassword::prompt_password("Please create a master password: ").unwrap();
-            let master_password_confirm = rpassword::prompt_password("Please confirm your master password: ").unwrap();
+            let master_password =
+                rpassword::prompt_password("Please create a master password: ").unwrap();
+            let master_password_confirm =
+                rpassword::prompt_password("Please confirm your master password: ").unwrap();
             // Get the stored hash from the config we loaded at the start
             if master_password != master_password_confirm {
                 eprintln!("❌ Passwords do not match. Aborting setup.");
                 return;
             }
-            let hashed = crypto::hash_data(master_password.as_bytes()).map_err(|e| e.to_string()).unwrap();
+            let hashed = crypto::hash_data(master_password.as_bytes())
+                .map_err(|e| e.to_string())
+                .unwrap();
             config.master_password_hash = Some(hashed.hash);
             config.save_config().unwrap();
 
@@ -50,7 +75,10 @@ fn main() {
             return;
         }
 
-        Commands::Generate { length, special_characters } => {
+        Commands::Generate {
+            length,
+            special_characters,
+        } => {
             let final_password = crypto::generate_password(*length, *special_characters);
             clipboard::copy_text(final_password);
             println!("Generated password has been copied! You can use it now.");
@@ -58,12 +86,17 @@ fn main() {
         }
         Commands::Unlock {} => {
             let master_password = rpassword::prompt_password("Enter Master Password: ").unwrap();
+            let Some(stored_hash) = config.master_password_hash.as_ref() else {
+                eprintln!("❌ RVault has not been set up. Please run 'rvault setup' first.");
+                return;
+            };
             // Your existing logic for verifying the password and getting the key is correct.
             match vault::Vault::get_encryption_key(&master_password, stored_hash) {
                 Ok(encryption_key) => {
                     match session::start_session(&encryption_key) {
                         Ok(token) => {
-                            session::write_current(&token).expect("Failed to write current session file");
+                            session::write_current(&token)
+                                .expect("Failed to write current session file");
                             eprintln!("✅ Vault unlocked."); // Use eprintln for user messages
                         }
                         Err(e) => eprintln!("❌ Failed to start session: {}", e),
@@ -77,12 +110,13 @@ fn main() {
             match session::end_session() {
                 Ok(_) => {
                     println!("Vault has been locked.")
-                },
+                }
                 Err(e) => eprintln!("Error: {}", e),
             }
             return;
         }
-        _ => true
+        Commands::Browser { .. } | Commands::Host { .. } => false,
+        _ => true,
     };
     // --- THE GUARD ---
     // If the command was not handled above, it's a protected command.
@@ -92,7 +126,11 @@ fn main() {
             Ok(key) => key, // The key is valid, proceed.
             Err(e) => {
                 eprintln!("❌ Error: {}", e);
-                eprintln!("Please run 'rvault unlock' to start a session.");
+                if config.master_password_hash.is_none() {
+                    eprintln!("Please run 'rvault setup' first.");
+                } else {
+                    eprintln!("Please run 'rvault unlock' to start a session.");
+                }
                 return; // Exit if the vault is locked.
             }
         }
@@ -106,31 +144,49 @@ fn main() {
             let _ = Table::new(&db, vault_name).unwrap();
             println!("Storage created successfully!");
         }
-        Commands::Add { vault, platform, id_and_password } => {
+        Commands::Add {
+            vault,
+            platform,
+            id_and_password,
+        } => {
             let db = storage::Database::new().unwrap();
             if let Ok(table) = Table::new(&db, vault) {
                 let (user_id, _) = id_and_password.split_once(':').unwrap();
                 let user_id_owned = user_id.to_string();
-                table.add_entry_with_key(&db,&ek ,platform.clone(), id_and_password);
-                println!("Account {} in {} has been added successfully!", user_id_owned, platform);
+                table.add_entry_with_key(&db, &ek, platform.clone(), id_and_password);
+                println!(
+                    "Account {} in {} has been added successfully!",
+                    user_id_owned, platform
+                );
             }
         }
-        Commands::Remove { vault, platform, id } => {
+        Commands::Remove {
+            vault,
+            platform,
+            id,
+        } => {
             let db = storage::Database::new().unwrap();
             if let Ok(table) = Table::new(&db, vault) {
-                 table.remove_entry(&db, platform.clone(), id.clone());
-                 println!("Account {} in {} has been removed successfully!", id, platform);
+                table.remove_entry(&db, platform.clone(), id.clone());
+                println!(
+                    "Account {} in {} has been removed successfully!",
+                    id, platform
+                );
             }
         }
-        Commands::Get { vault, platform, id } => {
+        Commands::Get {
+            vault,
+            platform,
+            id,
+        } => {
             let db = storage::Database::new().unwrap();
             if let Ok(table) = Table::new(&db, vault) {
-                match table.get_password_with_key(&db,&ek, platform, id) {
+                match table.get_password_with_key(&db, &ek, platform, id) {
                     Ok(_) => println!("Password has been copied! You can use it now."),
                     Err(e) => eprintln!("Error: {}", e),
                 }
             }
         }
-        _ => todo!()
+        _ => todo!(),
     }
 }
