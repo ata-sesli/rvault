@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: release-rvault VERSION
+
+Creates and pushes an annotated vVERSION tag for the current HEAD.
+Example:
+  release-rvault 1.2.0
+EOF
+}
+
+die() {
+  echo "release-rvault: $*" >&2
+  exit 1
+}
+
+require_file() {
+  local path="$1"
+  [[ -f "$path" ]] || die "required file is missing: $path"
+}
+
+require_clean_tree() {
+  if [[ -n "$(git status --porcelain)" ]]; then
+    die "working tree is not clean; commit or stash changes before releasing"
+  fi
+}
+
+require_version_line() {
+  local path="$1"
+  local pattern="$2"
+  grep -Eq "$pattern" "$path" || die "$path does not declare version $VERSION"
+}
+
+cargo_lock_version_for() {
+  local package="$1"
+  awk -v package="$package" '
+    $0 == "[[package]]" { in_package = 0 }
+    $0 == "name = \"" package "\"" { in_package = 1 }
+    in_package && /^version = / {
+      gsub(/"/, "", $3)
+      print $3
+      exit
+    }
+  ' Cargo.lock
+}
+
+require_cargo_lock_package_version() {
+  local package="$1"
+  local found
+  found="$(cargo_lock_version_for "$package")"
+  [[ "$found" == "$VERSION" ]] || die "Cargo.lock has $package version '${found:-missing}', expected $VERSION"
+}
+
+require_version_files() {
+  require_file Cargo.toml
+  require_file Cargo.lock
+  require_file extension/package.json
+
+  require_version_line Cargo.toml "^version = \"$VERSION\"$"
+  require_version_line extension/package.json "^[[:space:]]*\"version\": \"$VERSION\",?$"
+  require_cargo_lock_package_version rvault-cli
+  require_cargo_lock_package_version rvault-core
+  require_cargo_lock_package_version rvault-tui
+}
+
+require_tag_is_available() {
+  if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    die "local tag $TAG already exists"
+  fi
+
+  set +e
+  git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1
+  local status=$?
+  set -e
+
+  case "$status" in
+    0) die "remote tag $TAG already exists on origin" ;;
+    2) return 0 ;;
+    *) die "could not check remote tags on origin" ;;
+  esac
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+VERSION="${1#v}"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+  die "version must be SemVer like 1.2.0 or 1.2.0-beta.1"
+fi
+
+TAG="v$VERSION"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository"
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+require_clean_tree
+require_version_files
+require_tag_is_available
+
+HEAD_SHA="$(git rev-parse --short HEAD)"
+git tag -a "$TAG" -m "RVault $VERSION"
+git push origin "$TAG"
+
+echo "Released RVault $VERSION from $HEAD_SHA by pushing tag $TAG."

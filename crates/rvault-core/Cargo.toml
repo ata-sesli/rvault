@@ -1,10 +1,11 @@
 [package]
 name = "rvault-core"
-version = "0.1.1" 
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Ata Sesli"]
-repository = "https://github.com/atasesli/rvault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description.workspace = true
 
 [lib]
 name = "rvault_core"

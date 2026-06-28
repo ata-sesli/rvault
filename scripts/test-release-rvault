@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT="$ROOT/release-rvault"
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+fail() {
+  echo "test-release-rvault: $*" >&2
+  exit 1
+}
+
+write_release_files() {
+  local version="$1"
+
+  cat > Cargo.toml <<EOF
+[workspace.package]
+version = "$version"
+EOF
+
+  mkdir -p extension
+  cat > extension/package.json <<EOF
+{
+  "version": "$version"
+}
+EOF
+
+  cat > Cargo.lock <<EOF
+[[package]]
+name = "rvault-cli"
+version = "$version"
+
+[[package]]
+name = "rvault-core"
+version = "$version"
+
+[[package]]
+name = "rvault-tui"
+version = "$version"
+EOF
+}
+
+git init --bare "$TMPDIR/origin.git" >/dev/null
+git init "$TMPDIR/work" >/dev/null
+cd "$TMPDIR/work"
+git config user.name "RVault Release Test"
+git config user.email "release-test@example.invalid"
+git remote add origin "$TMPDIR/origin.git"
+
+write_release_files "1.2.0"
+git add Cargo.toml Cargo.lock extension/package.json
+git commit -m "release prep" >/dev/null
+
+"$SCRIPT" 1.2.0 >/tmp/release-rvault-test.out
+
+local_commit="$(git rev-parse HEAD)"
+local_tag_commit="$(git rev-parse v1.2.0^{commit})"
+remote_tag_commit="$(git --git-dir="$TMPDIR/origin.git" rev-parse refs/tags/v1.2.0^{commit})"
+
+[[ "$local_tag_commit" == "$local_commit" ]] || fail "local tag does not point at HEAD"
+[[ "$remote_tag_commit" == "$local_commit" ]] || fail "remote tag does not point at HEAD"
+
+touch dirty-file
+if "$SCRIPT" 1.2.1 >/tmp/release-rvault-test-dirty.out 2>/tmp/release-rvault-test-dirty.err; then
+  fail "dirty working tree release unexpectedly succeeded"
+fi
+grep -q "working tree is not clean" /tmp/release-rvault-test-dirty.err ||
+  fail "dirty working tree error was not reported"
+
+echo "release-rvault tests passed"

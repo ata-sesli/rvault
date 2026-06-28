@@ -211,14 +211,46 @@ jobs:
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
+
+  build-extension-artifact:
+    needs:
+      - plan
+    if: ${{ needs.plan.result == 'success' }}
+    runs-on: "ubuntu-22.04"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+      - name: Build Helium extension
+        working-directory: extension
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - id: extension
+        name: Package Helium extension
+        shell: bash
+        run: |
+          VERSION="$(bun -e "const pkg = await import('./extension/package.json'); console.log(pkg.default.version)")"
+          ZIP_NAME="rvault-extension-${VERSION}.zip"
+          (cd extension/build/chrome-mv3-prod && zip -r "../../../${ZIP_NAME}" .)
+          echo "zip=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+      - name: "Upload extension artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-extension
+          path: ${{ steps.extension.outputs.zip }}
+
   # Determines if we should publish/announce
   host:
     needs:
       - plan
       - build-local-artifacts
       - build-global-artifacts
+      - build-extension-artifact
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-extension-artifact.result == 'skipped' || needs.build-extension-artifact.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"

@@ -1,85 +1,185 @@
 # RVault
 
-RVault is a local-first password manager written in Rust.
+RVault is a local-first password manager written in Rust, with a terminal UI, a CLI, and a Helium browser extension that talks to the local `rvault` binary through native messaging.
 
-It stores encrypted credentials in a local SQLite database and can be used either through a command-line interface or an interactive terminal UI built with ratatui.
+Current version: `1.2.0`.
 
-## What it does
+RVault keeps storage local. Passwords are encrypted before they are written to SQLite, browser integration goes through a local native host, and the extension does not store plaintext credentials.
 
-RVault stores credentials in a local SQLite database and encrypts each password before writing it to disk.
+## Contents
 
-The project currently has two ways to use it:
+- [Install RVault](#install-rvault)
+- [Install the Helium Extension Locally](#install-the-helium-extension-locally)
+- [Quick Start](#quick-start)
+- [Backup and Restore](#backup-and-restore)
+- [Encrypted Export and Import](#encrypted-export-and-import)
+- [TUI Keybindings](#tui-keybindings)
+- [How RVault Works](#how-rvault-works)
+- [Build and Test From Source](#build-and-test-from-source)
+- [Release Checklist](#release-checklist)
+- [Current Boundaries](#current-boundaries)
+- [License](#license)
 
-- `rvault` launches a `ratatui`-based terminal UI for browsing, adding, editing, deleting, pinning, and copying entries.
-- `rvault <subcommand>` exposes a few core operations from the shell, including setup, unlock, lock, create, add, get, remove, and password generation.
+## Install RVault
 
-Passwords are copied to the system clipboard rather than printed to stdout.
+### From GitHub Releases
 
-## Why this project exists
-
-RVault is built around a simple goal: keep password management local and scriptable without depending on a hosted service or browser extension.
-
-The codebase is structured as a Rust workspace, so the storage and crypto logic live in a reusable core crate while the TUI and CLI sit on top of it.
-
-## Demo
-
-https://github.com/user-attachments/assets/8d165491-0f6d-4da9-9a37-0c68e1f3dea2
-
-## Key features
-
-- Local-only storage under the OS-specific application data directory
-- Master-password setup with Argon2-based verification
-- Per-entry encryption using ChaCha20-Poly1305
-- Session-based unlock flow with automatic expiration
-- Terminal UI for day-to-day use
-- Built-in password generator
-- Clipboard copy for generated or retrieved passwords
-- Pinning and sorting in the TUI
-- Multiple vault tables in the underlying database via the CLI
-- Theme support in the TUI
-
-## Installation
-
-The easiest way to install RVault is from the GitHub Releases page:
-
-- Open: <https://github.com/ata-sesli/rvault/releases>
-- Download the archive or installer for your platform
-- Add the installed `rvault` binary to your `PATH` if your platform-specific package does not do that automatically
-
-If you prefer the release install scripts used by the project site, the current documented commands are:
+After the `v1.2.0` release is published, install the CLI from the release assets:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v0.1.1/rvault-cli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v1.2.0/rvault-cli-installer.sh | sh
 ```
+
+On Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v0.1.1/rvault-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v1.2.0/rvault-cli-installer.ps1 | iex"
 ```
 
-To build from source instead:
+Confirm the install:
+
+```bash
+rvault --version
+```
+
+Expected version:
+
+```text
+rvault-cli 1.2.0
+```
+
+### From Source
+
+Requirements:
+
+- Rust toolchain with Cargo
+- Bun, only needed for the browser extension
+- Helium on macOS, only needed for browser integration
+
+Install the CLI from this repository:
 
 ```bash
 git clone https://github.com/ata-sesli/rvault.git
 cd rvault
-cargo install --path crates/rvault-cli
+cargo install --path crates/rvault-cli --force
+rvault --version
 ```
 
-For local development:
+Run the terminal UI:
 
 ```bash
-cargo build --release
-cargo run -p rvault-cli
+rvault
 ```
 
-## Quick example
+## Install the Helium Extension Locally
 
-First-time setup:
+The RVault extension is not published in the Chrome Web Store for `1.2.0`. Install it locally in Helium.
+
+This v1 path targets **Helium on macOS**. `rvault browser enable` writes Helium's native messaging manifest here:
+
+```text
+~/Library/Application Support/net.imput.helium/NativeMessagingHosts/io.github.ata_sesli.rvault.json
+```
+
+### Option A: Install From a Release ZIP
+
+1. Install the `rvault` CLI first.
+
+2. Download `rvault-extension-1.2.0.zip` from the `v1.2.0` GitHub release.
+
+3. Unzip it somewhere stable, for example:
+
+```bash
+mkdir -p ~/Applications/rvault-extension
+unzip rvault-extension-1.2.0.zip -d ~/Applications/rvault-extension
+```
+
+4. Open Helium and go to:
+
+```text
+chrome://extensions
+```
+
+5. Enable **Developer mode**.
+
+6. Click **Load unpacked**.
+
+7. Select:
+
+```text
+~/Applications/rvault-extension
+```
+
+8. Register RVault as Helium's native messaging host:
+
+```bash
+rvault browser enable
+```
+
+9. Click the RVault toolbar icon in Helium.
+
+If you move or reinstall the `rvault` binary, run this again:
+
+```bash
+rvault browser enable
+```
+
+To remove the native messaging registration:
+
+```bash
+rvault browser disable
+```
+
+### Option B: Build the Extension Locally
+
+From the repository root:
+
+```bash
+cd extension
+bun install
+bun run build
+```
+
+Then load this folder in Helium:
+
+```text
+extension/build/chrome-mv3-prod
+```
+
+After loading the extension, register the native host:
+
+```bash
+rvault browser enable
+```
+
+Do not load the top-level `extension/` folder. Helium must load the built `chrome-mv3-prod` folder.
+
+### Troubleshooting Browser Integration
+
+If the extension says the native host is unavailable:
+
+```bash
+rvault browser disable
+rvault browser enable
+```
+
+Then reload the extension in `chrome://extensions`.
+
+The extension ID is pinned by the manifest key. The expected Helium extension ID is:
+
+```text
+gnfmkmiklgghclejbbdmjgcldajahfhh
+```
+
+## Quick Start
+
+Set up RVault once:
 
 ```bash
 rvault setup
 ```
 
-Unlock the vault for protected commands:
+Unlock the vault:
 
 ```bash
 rvault unlock
@@ -91,10 +191,16 @@ Add a credential:
 rvault add github alice:correct-horse-battery-staple
 ```
 
-Retrieve a credential and copy it to the clipboard:
+Copy a credential password to the clipboard:
 
 ```bash
 rvault get github alice
+```
+
+Generate a password and copy it to the clipboard:
+
+```bash
+rvault generate --length 20 --special-characters
 ```
 
 Launch the terminal UI:
@@ -103,11 +209,81 @@ Launch the terminal UI:
 rvault
 ```
 
-## TUI keybindings
+Lock the vault:
 
-These are the main bindings exposed by the current TUI implementation.
+```bash
+rvault lock
+```
 
-### Main table
+## Backup and Restore
+
+Backups are full encrypted binary recovery bundles. A backup is for the owner of the vault, not for sharing selected entries.
+
+Create a backup:
+
+```bash
+rvault backup create --out rvault.rvault-backup
+```
+
+Restore a backup:
+
+```bash
+rvault backup restore rvault.rvault-backup
+```
+
+Skip the interactive restore confirmation:
+
+```bash
+rvault backup restore rvault.rvault-backup --yes
+```
+
+Restore replaces local RVault data after confirmation. Keep backup files somewhere you control.
+
+## Encrypted Export and Import
+
+Exports are encrypted binary `.rvault-export` files for selected-entry sharing with another RVault user.
+
+The recipient gets their public RVault identity code:
+
+```bash
+rvault unlock
+rvault identity
+```
+
+The sender exports one entry for that recipient:
+
+```bash
+rvault export --to rvault1-recipient-code --entry github alice --out github.rvault-export
+```
+
+The sender can export multiple selected entries:
+
+```bash
+rvault export --to rvault1-recipient-code \
+  --selected github:alice \
+  --selected email:alice@example.com \
+  --out shared.rvault-export
+```
+
+The recipient imports the file:
+
+```bash
+rvault unlock
+rvault import shared.rvault-export
+```
+
+Conflict shortcuts:
+
+```bash
+rvault import shared.rvault-export --overwrite-all
+rvault import shared.rvault-export --skip-all
+```
+
+Only the recipient identity can decrypt the export.
+
+## TUI Keybindings
+
+### Main Table
 
 | Key | Action |
 | --- | --- |
@@ -117,13 +293,18 @@ These are the main bindings exposed by the current TUI implementation.
 | `e` | Edit the selected entry |
 | `d` | Delete the selected entry |
 | `p` | Pin or unpin the selected entry |
+| `i` | Copy this device's public identity code |
+| `b` | Create a backup |
+| `r` | Restore a backup |
+| `x` | Export the selected entry |
+| `m` | Import an encrypted export file |
 | `S` | Open sort selection |
 | `t` | Open theme selection |
 | `Tab` | Switch to the password generator |
 | `q` / `Esc` | Quit |
 | `Shift+Q` | Lock and quit |
 
-### Generator view
+### Generator View
 
 | Key | Action |
 | --- | --- |
@@ -133,7 +314,7 @@ These are the main bindings exposed by the current TUI implementation.
 | `Tab` | Return to the main table |
 | `q` / `Esc` | Quit |
 
-### Selection dialogs
+### Selection Dialogs
 
 | Key | Action |
 | --- | --- |
@@ -142,43 +323,94 @@ These are the main bindings exposed by the current TUI implementation.
 | `Enter` | Confirm |
 | `q` / `Esc` | Close the dialog |
 
-## How it works
+## How RVault Works
 
-RVault splits responsibilities across three crates:
+RVault is split into three Rust crates and one browser extension:
 
-- `rvault-core` handles config, keystore management, encryption, sessions, storage, and clipboard integration.
-- `rvault-cli` is the main binary and command parser.
-- `rvault-tui` provides the interactive terminal interface.
+- `rvault-core` handles config, keystore management, encryption, sessions, binary envelopes, backup, identity, export/import, storage, and clipboard integration.
+- `rvault-cli` builds the `rvault` binary, CLI commands, and native messaging host.
+- `rvault-tui` provides the terminal UI.
+- `extension` contains the Plasmo MV3 extension for Helium.
 
-At setup time, RVault hashes the master password and stores the hash in the config directory. It also generates a master encryption key and writes it to a local keystore file encrypted with a key derived from the master password.
+At setup time, RVault stores a master-password hash in the config directory and creates a local keystore file encrypted with a key derived from the master password.
 
-When you unlock the vault, RVault decrypts that master encryption key and stores it in a session file with a timeout. Protected operations read the encryption key from the active session instead of prompting every time.
+When the vault is unlocked, protected operations use the active session key instead of asking for the master password for every command.
 
-Password entries are stored in SQLite. Each entry gets its own salt-derived key based on the current session key, and the encrypted password, nonce, and salt are stored with the row.
+Browser integration uses Chrome-style native messaging. Helium launches `rvault` directly when the extension sends a native message. `rvault browser enable` only registers the native messaging manifest; it does not start a background daemon.
 
-## Limitations and trade-offs
+## Build and Test From Source
 
-- The project is local-only. There is no sync, sharing, or remote backup layer.
-- The CLI surface is larger than the currently implemented command set. Some declared commands such as clipboard watching and export are not wired up yet.
-- The TUI works against the default vault table; multi-vault workflows are more visible in the CLI than in the UI.
-- Retrieved passwords are copied to the clipboard. If you want a different retrieval model, that would need code changes.
+Build Rust crates:
 
-## Project structure
+```bash
+cargo build
+```
 
-- `Cargo.toml`: workspace definition
-- `crates/rvault-core`: shared storage, crypto, config, keystore, session, and clipboard logic
-- `crates/rvault-cli`: CLI binary named `rvault`
-- `crates/rvault-tui`: terminal UI library and TUI-specific app state
+Run Rust tests:
 
-## Roadmap
+```bash
+cargo test -p rvault-core
+cargo test -p rvault-cli
+cargo test -p rvault-tui
+cargo check
+```
 
-Possible near-term improvements based on the current code structure:
+Build and test the extension:
 
-- Finish or remove partially declared CLI commands
-- Improve multi-vault support in the TUI
-- Add import/export with a documented format
-- Add tests around storage migrations and session handling
-- Tighten README and CLI help so supported workflows are easier to discover
+```bash
+cd extension
+bun install
+bun test
+bun run build
+```
+
+Create a local extension ZIP:
+
+```bash
+cd extension/build/chrome-mv3-prod
+zip -r ../../../rvault-extension-1.2.0.zip .
+```
+
+The ZIP must contain `manifest.json` at the ZIP root.
+
+## Release Checklist
+
+For `1.2.0`:
+
+1. Confirm versions are `1.2.0` in `Cargo.toml`, `Cargo.lock`, and `extension/package.json`.
+2. Run Rust checks:
+
+```bash
+cargo test -p rvault-core
+cargo test -p rvault-cli
+cargo test -p rvault-tui
+cargo check
+```
+
+3. Run extension checks:
+
+```bash
+cd extension
+bun test
+bun run build
+```
+
+4. Tag and push the release:
+
+```bash
+./release-rvault 1.2.0
+```
+
+The release workflow builds the CLI installers with cargo-dist and uploads `rvault-extension-1.2.0.zip` for local Helium installation.
+
+## Current Boundaries
+
+- The browser extension is distributed locally for `1.2.0`; it is not published in the Chrome Web Store.
+- Browser native host registration targets Helium on macOS.
+- Firefox support is not included in this release.
+- RVault does not provide hosted sync.
+- Export/import is encrypted recipient sharing, not plaintext export.
+- Backups are full recovery files and replace local RVault data on restore.
 
 ## License
 
