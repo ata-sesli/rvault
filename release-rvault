@@ -82,6 +82,23 @@ require_tag_is_available() {
   esac
 }
 
+run_dist_preflight() {
+  if [[ ! -f dist-workspace.toml ]]; then
+    return 0
+  fi
+  command -v dist >/dev/null 2>&1 || die "dist is required for release preflight; install cargo-dist or remove dist-workspace.toml"
+
+  local manifest_path
+  manifest_path="$(mktemp)"
+  if dist plan --output-format=json > "$manifest_path"; then
+    rm -f "$manifest_path"
+  else
+    local status=$?
+    rm -f "$manifest_path"
+    return "$status"
+  fi
+}
+
 if [[ $# -ne 1 ]]; then
   usage
   exit 2
@@ -101,6 +118,7 @@ cd "$ROOT"
 require_clean_tree
 require_version_files
 require_tag_is_available
+run_dist_preflight
 
 HEAD_SHA="$(git rev-parse --short HEAD)"
 git tag -a "$TAG" -m "RVault $VERSION"

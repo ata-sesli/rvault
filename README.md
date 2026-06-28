@@ -401,7 +401,7 @@ bun run build
 ./release-rvault 1.2.0
 ```
 
-The release workflow builds the CLI installers with cargo-dist and uploads `rvault-extension-1.2.0.zip` for local Helium installation.
+The cargo-dist release workflow builds the CLI installers. A separate extension release workflow builds and uploads `rvault-extension-1.2.0.zip` for local Helium installation after the GitHub Release exists.
 
 ## Current Boundaries
 

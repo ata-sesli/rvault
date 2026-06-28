@@ -49,10 +49,21 @@ git config user.email "release-test@example.invalid"
 git remote add origin "$TMPDIR/origin.git"
 
 write_release_files "1.2.0"
-git add Cargo.toml Cargo.lock extension/package.json
+touch dist-workspace.toml
+mkdir -p "$TMPDIR/fake-bin"
+cat > "$TMPDIR/fake-bin/dist" <<EOF
+#!/usr/bin/env bash
+echo "\$*" > "$TMPDIR/dist-args"
+[[ "\$*" == "plan --output-format=json" ]] || exit 1
+printf '{}'
+EOF
+chmod +x "$TMPDIR/fake-bin/dist"
+git add Cargo.toml Cargo.lock dist-workspace.toml extension/package.json
 git commit -m "release prep" >/dev/null
 
-"$SCRIPT" 1.2.0 >/tmp/release-rvault-test.out
+PATH="$TMPDIR/fake-bin:$PATH" "$SCRIPT" 1.2.0 >/tmp/release-rvault-test.out
+grep -q "plan --output-format=json" "$TMPDIR/dist-args" ||
+  fail "dist preflight was not run"
 
 local_commit="$(git rev-parse HEAD)"
 local_tag_commit="$(git rev-parse v1.2.0^{commit})"
