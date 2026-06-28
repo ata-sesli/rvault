@@ -1,4 +1,3 @@
-use crate::crypto::Encryption;
 use clap::{Parser, Subcommand};
 /// RVault: A modern, secure password manager using encrypted local vaults.
 #[derive(Debug, Parser)]
@@ -56,13 +55,37 @@ pub enum Commands {
     /// Stops watching the clipboard.
     /// Example Usage: ravult unwatch
     Unwatch {},
-    /// Exports the specified vault to an encrypted file in the given path.
-    /// Example Usage: rvault export my_secret_vault ./
+    /// Creates or restores encrypted RVault backup files.
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommands,
+    },
+    /// Prints this device's public RVault recipient code.
+    Identity {},
+    /// Exports selected entries to an encrypted binary file for a recipient.
+    /// Example Usage: rvault export --to rvault1-abc --entry github ata --out github.rvault-export
     Export {
-        vault_name: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long, num_args = 2, value_names = ["PLATFORM", "USER_ID"])]
+        entry: Option<Vec<String>>,
+        #[arg(long, value_name = "PLATFORM:USER_ID")]
+        selected: Vec<String>,
+        #[arg(long)]
+        out: String,
+        #[arg(short, long)]
+        vault: Option<String>,
+    },
+    /// Imports an encrypted RVault export file.
+    /// Example Usage: rvault import gmail.rvault-export
+    Import {
         path: String,
         #[arg(short, long)]
-        encryption: Option<Encryption>,
+        vault: Option<String>,
+        #[arg(long)]
+        overwrite_all: bool,
+        #[arg(long)]
+        skip_all: bool,
     },
     /// Unlocks the vault in order to use it, prompts master password. It automatically locks after a certain amount of time.
     /// Example Usage: rvault unlock
@@ -83,6 +106,21 @@ pub enum Commands {
     Host {
         #[command(subcommand)]
         command: HostCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BackupCommands {
+    /// Creates a full encrypted RVault backup file.
+    Create {
+        #[arg(long)]
+        out: String,
+    },
+    /// Restores a full encrypted RVault backup file.
+    Restore {
+        path: String,
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -134,5 +172,91 @@ mod tests {
         let result = Cli::try_parse_from(["rvault", "host", "start"]);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn backup_create_parses_output_path() {
+        let cli = Cli::parse_from([
+            "rvault",
+            "backup",
+            "create",
+            "--out",
+            "rvault.rvault-backup",
+        ]);
+
+        match cli.command {
+            Some(Commands::Backup {
+                command: BackupCommands::Create { out },
+            }) => assert_eq!(out, "rvault.rvault-backup"),
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn backup_restore_parses_confirmation_flag() {
+        let cli = Cli::parse_from([
+            "rvault",
+            "backup",
+            "restore",
+            "rvault.rvault-backup",
+            "--yes",
+        ]);
+
+        match cli.command {
+            Some(Commands::Backup {
+                command: BackupCommands::Restore { path, yes },
+            }) => {
+                assert_eq!(path, "rvault.rvault-backup");
+                assert!(yes);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn identity_parses_as_top_level_command() {
+        let cli = Cli::parse_from(["rvault", "identity"]);
+
+        assert!(matches!(cli.command, Some(Commands::Identity {})));
+    }
+
+    #[test]
+    fn export_parses_recipient_entry_and_output() {
+        let cli = Cli::parse_from([
+            "rvault",
+            "export",
+            "--to",
+            "rvault1-recipient",
+            "--entry",
+            "Gmail",
+            "ata@example.com",
+            "--out",
+            "gmail.rvault-export",
+        ]);
+
+        match cli.command {
+            Some(Commands::Export { to, entry, out, .. }) => {
+                assert_eq!(to, "rvault1-recipient");
+                assert_eq!(
+                    entry,
+                    Some(vec!["Gmail".to_string(), "ata@example.com".to_string()])
+                );
+                assert_eq!(out, "gmail.rvault-export");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_parses_path_and_conflict_flags() {
+        let cli = Cli::parse_from(["rvault", "import", "gmail.rvault-export", "--skip-all"]);
+
+        match cli.command {
+            Some(Commands::Import { path, skip_all, .. }) => {
+                assert_eq!(path, "gmail.rvault-export");
+                assert!(skip_all);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 }

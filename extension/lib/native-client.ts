@@ -18,6 +18,28 @@ export type HostRequest =
     }
   | { type: "delete"; platform: string; userId: string; vault?: string }
   | { type: "generate"; length: number; specialCharacters: boolean }
+  | { type: "identity" }
+  | { type: "backupCreate"; masterPassword: string }
+  | { type: "backupRestore"; masterPassword: string; token: string }
+  | {
+      type: "export"
+      to: string
+      entries: Array<{ platform: string; userId: string }>
+      vault?: string
+    }
+  | { type: "importPreview"; token: string; vault?: string }
+  | {
+      type: "importApply"
+      token: string
+      vault?: string
+      overwriteAll?: boolean
+      skipAll?: boolean
+      decisions?: Array<{ platform: string; userId: string; action: "overwrite" | "skip" }>
+    }
+  | { type: "downloadChunk"; token: string; offset: number; length?: number }
+  | { type: "uploadStart" }
+  | { type: "uploadChunk"; token: string; contentBase64: string }
+  | { type: "transferFinish"; token: string }
 
 export type HostErrorCode =
   | "locked"

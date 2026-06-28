@@ -8,6 +8,7 @@ use argon2::{Argon2, password_hash::SaltString};
 use chrono::Utc;
 use directories::ProjectDirs;
 use rusqlite::{Connection, params};
+use std::path::PathBuf;
 
 const CURRENT_DB_PATH: &str = "RVAULT_CURRENT_DB_PATH";
 const CURRENT_VAULT_NAME: &str = "RVAULT_CURRENT_VAULT_NAME";
@@ -17,16 +18,20 @@ pub struct Database {
 }
 impl Database {
     pub fn new() -> Result<Self, DatabaseError> {
-        if let Some(project_dirs) = ProjectDirs::from("io.github", "ata-sesli", "RVault") {
-            let project_dirs = project_dirs.data_dir();
-            let database_dir = project_dirs.join("databases");
-            let _ = std::fs::create_dir_all(&database_dir)?;
-            let final_path = database_dir.join("default_vault.sqlite");
-            let connection = Connection::open(&final_path)?;
-            Ok(Self { connection })
-        } else {
-            Err(DatabaseError::Path)
-        }
+        let final_path = database_path()?;
+        let connection = Connection::open(&final_path)?;
+        Ok(Self { connection })
+    }
+}
+
+pub fn database_path() -> Result<PathBuf, DatabaseError> {
+    if let Some(project_dirs) = ProjectDirs::from("io.github", "ata-sesli", "RVault") {
+        let project_dirs = project_dirs.data_dir();
+        let database_dir = project_dirs.join("databases");
+        let _ = std::fs::create_dir_all(&database_dir)?;
+        Ok(database_dir.join("default_vault.sqlite"))
+    } else {
+        Err(DatabaseError::Path)
     }
 }
 
@@ -239,6 +244,73 @@ impl Table {
         if affected == 0 {
             return Err(DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
         }
+        Ok(())
+    }
+
+    pub fn entry_exists(
+        &self,
+        db: &Database,
+        platform: &str,
+        user_id: &str,
+    ) -> Result<bool, DatabaseError> {
+        let query = format!(
+            "SELECT EXISTS(SELECT 1 FROM {} WHERE platform = ?1 AND user_id = ?2)",
+            &self.table_name
+        );
+        let exists: bool = db
+            .connection
+            .query_row(&query, params![platform, user_id], |row| row.get(0))?;
+        Ok(exists)
+    }
+
+    pub fn import_entry_with_key_result(
+        &self,
+        db: &Database,
+        encryption_key: &[u8],
+        entry: &crate::portable_export::ExportEntry,
+    ) -> Result<(), DatabaseError> {
+        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+        let mut entry_key = [0u8; 32];
+        Argon2::default()
+            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), &mut entry_key)
+            .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
+        let (ciphertext, nonce) = encrypt_with_key(&entry_key, entry.password.as_bytes())
+            .map_err(DatabaseError::Crypto)?;
+        let now = Utc::now().timestamp();
+        let created_at = if entry.created_at > 0 {
+            entry.created_at
+        } else {
+            now
+        };
+        let updated_at = if entry.updated_at > 0 {
+            entry.updated_at
+        } else {
+            now
+        };
+        let query = format!(
+            "INSERT INTO {} (platform, user_id, password, nonce, salt, pinned, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(platform, user_id) DO UPDATE SET
+             password = ?3,
+             nonce = ?4,
+             salt = ?5,
+             pinned = ?6,
+             updated_at = ?8;",
+            &self.table_name
+        );
+        db.connection.execute(
+            &query,
+            params![
+                entry.platform,
+                entry.user_id,
+                ciphertext,
+                nonce,
+                salt.to_string(),
+                entry.pinned,
+                created_at,
+                updated_at
+            ],
+        )?;
         Ok(())
     }
 

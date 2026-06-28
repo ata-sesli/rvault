@@ -112,6 +112,31 @@ pub fn encrypt_with_key(key: &[u8], data: &[u8]) -> Result<(String, String), Str
 
     Ok((Base64.encode(&ciphertext), Base64.encode(&nonce)))
 }
+
+pub fn encrypt_bytes_with_key(key: &[u8], data: &[u8]) -> Result<([u8; 12], Vec<u8>), String> {
+    let cipher = ChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut chacha20poly1305::aead::OsRng);
+    let ciphertext = cipher.encrypt(&nonce, data).map_err(|e| e.to_string())?;
+    let mut nonce_bytes = [0_u8; 12];
+    nonce_bytes.copy_from_slice(nonce.as_slice());
+    Ok((nonce_bytes, ciphertext))
+}
+
+pub fn decrypt_bytes_with_key(
+    key: &[u8],
+    nonce_bytes: &[u8],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, String> {
+    if nonce_bytes.len() != 12 {
+        return Err("invalid nonce length".to_string());
+    }
+    let cipher = ChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    cipher
+        .decrypt(nonce, ciphertext.as_ref())
+        .map_err(|e| format!("decrypt failed: {e}"))
+}
+
 pub fn decrypt_with_key(
     key: &[u8],
     ciphertext_b64: &str,

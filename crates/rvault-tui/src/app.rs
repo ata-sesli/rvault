@@ -3,8 +3,9 @@ use crate::ui::Theme;
 use crossterm::event::{KeyCode, KeyEventKind};
 use ratatui::widgets::ListState;
 use rvault_core::{
-    clipboard, config, crypto,
+    backup, clipboard, config, crypto, identity,
     keystore::{self, keystore_path},
+    portable_export,
     session::{self, get_key_from_session},
     storage::{Database, Table},
     vault::{Vault, VaultEntry},
@@ -26,6 +27,22 @@ pub enum AddEntryStage {
 pub enum EditEntryStage {
     UserId,
     Password,
+}
+
+pub enum BackupCreateStage {
+    Path,
+    Password,
+}
+
+pub enum BackupRestoreStage {
+    Path,
+    Password,
+    Confirm,
+}
+
+pub enum ExportEntryStage {
+    Recipient,
+    Path,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -93,6 +110,31 @@ pub enum AppState {
         user_id: InputState,
         password: InputState,
         stage: AddEntryStage,
+    },
+    BackupCreate {
+        path: InputState,
+        password: InputState,
+        stage: BackupCreateStage,
+    },
+    BackupRestore {
+        path: InputState,
+        password: InputState,
+        confirm: InputState,
+        stage: BackupRestoreStage,
+    },
+    ExportEntry {
+        platform: String,
+        user_id: String,
+        recipient: InputState,
+        path: InputState,
+        stage: ExportEntryStage,
+    },
+    ImportExport {
+        path: InputState,
+    },
+    ImportExportConfirm {
+        path: String,
+        conflicts: usize,
     },
     ThemeSelection,
     SortSelection,
@@ -337,6 +379,52 @@ impl App {
                             user_id: InputState::new(),
                             password: InputState::new(),
                             stage: AddEntryStage::Platform,
+                        };
+                    }
+                    KeyCode::Char('i') => match get_key_from_session()
+                        .map_err(|e| e.to_string())
+                        .and_then(|key| identity::load_or_create_identity(&key))
+                    {
+                        Ok(id) => {
+                            clipboard::copy_text(identity::public_code_from_key(&id.public_key));
+                            self.show_toast("Identity copied!");
+                        }
+                        Err(e) => self.auth_error = Some(e),
+                    },
+                    KeyCode::Char('b') => {
+                        self.state = AppState::BackupCreate {
+                            path: InputState::with_value("rvault.rvault-backup".to_string()),
+                            password: InputState::new(),
+                            stage: BackupCreateStage::Path,
+                        };
+                    }
+                    KeyCode::Char('r') => {
+                        self.state = AppState::BackupRestore {
+                            path: InputState::with_value("rvault.rvault-backup".to_string()),
+                            password: InputState::new(),
+                            confirm: InputState::new(),
+                            stage: BackupRestoreStage::Path,
+                        };
+                    }
+                    KeyCode::Char('x') => {
+                        if let Some(i) = self.list_state.selected() {
+                            if let Some(entry) = self.items.get(i) {
+                                self.state = AppState::ExportEntry {
+                                    platform: entry.platform.clone(),
+                                    user_id: entry.user_id.clone(),
+                                    recipient: InputState::new(),
+                                    path: InputState::with_value(format!(
+                                        "{}.rvault-export",
+                                        sanitize_file_name(&entry.platform)
+                                    )),
+                                    stage: ExportEntryStage::Recipient,
+                                };
+                            }
+                        }
+                    }
+                    KeyCode::Char('m') => {
+                        self.state = AppState::ImportExport {
+                            path: InputState::with_value("rvault.rvault-export".to_string()),
                         };
                     }
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
@@ -766,6 +854,181 @@ impl App {
                     _ => {}
                 }
             }
+            AppState::BackupCreate {
+                path,
+                password,
+                stage,
+            } => match key.code {
+                KeyCode::Esc => transition_to_main = true,
+                KeyCode::Enter => match stage {
+                    BackupCreateStage::Path => *stage = BackupCreateStage::Password,
+                    BackupCreateStage::Password => {
+                        let result = config::Config::new()
+                            .map_err(|e| e.to_string())
+                            .and_then(|config| {
+                                verify_backup_master_password(&config, &password.value)
+                            })
+                            .and_then(|_| {
+                                backup::create_backup_file(
+                                    &password.value,
+                                    std::path::Path::new(&path.value),
+                                )
+                            });
+                        match result {
+                            Ok(_) => self.show_toast("Backup written!"),
+                            Err(e) => self.auth_error = Some(e),
+                        }
+                        transition_to_main = true;
+                    }
+                },
+                KeyCode::Up => *stage = BackupCreateStage::Path,
+                KeyCode::Down => *stage = BackupCreateStage::Password,
+                KeyCode::Left => {
+                    active_backup_create_input(path, password, stage).move_cursor_left()
+                }
+                KeyCode::Right => {
+                    active_backup_create_input(path, password, stage).move_cursor_right()
+                }
+                KeyCode::Backspace => {
+                    active_backup_create_input(path, password, stage).delete_char()
+                }
+                KeyCode::Char(c) => {
+                    active_backup_create_input(path, password, stage).insert_char(c)
+                }
+                _ => {}
+            },
+            AppState::BackupRestore {
+                path,
+                password,
+                confirm,
+                stage,
+            } => {
+                match key.code {
+                    KeyCode::Esc => transition_to_main = true,
+                    KeyCode::Enter => match stage {
+                        BackupRestoreStage::Path => *stage = BackupRestoreStage::Password,
+                        BackupRestoreStage::Password => *stage = BackupRestoreStage::Confirm,
+                        BackupRestoreStage::Confirm => {
+                            if confirm.value == "RESTORE" {
+                                match backup::restore_backup_file(
+                                    &password.value,
+                                    std::path::Path::new(&path.value),
+                                ) {
+                                    Ok(_) => self.show_toast("Backup restored. Restart RVault."),
+                                    Err(e) => self.auth_error = Some(e),
+                                }
+                                transition_to_login = true;
+                            } else {
+                                self.auth_error = Some("Type RESTORE to confirm.".into());
+                            }
+                        }
+                    },
+                    KeyCode::Up => {
+                        *stage = match stage {
+                            BackupRestoreStage::Path => BackupRestoreStage::Path,
+                            BackupRestoreStage::Password => BackupRestoreStage::Path,
+                            BackupRestoreStage::Confirm => BackupRestoreStage::Password,
+                        }
+                    }
+                    KeyCode::Down => {
+                        *stage = match stage {
+                            BackupRestoreStage::Path => BackupRestoreStage::Password,
+                            BackupRestoreStage::Password => BackupRestoreStage::Confirm,
+                            BackupRestoreStage::Confirm => BackupRestoreStage::Confirm,
+                        }
+                    }
+                    KeyCode::Left => active_backup_restore_input(path, password, confirm, stage)
+                        .move_cursor_left(),
+                    KeyCode::Right => active_backup_restore_input(path, password, confirm, stage)
+                        .move_cursor_right(),
+                    KeyCode::Backspace => {
+                        active_backup_restore_input(path, password, confirm, stage).delete_char()
+                    }
+                    KeyCode::Char(c) => {
+                        active_backup_restore_input(path, password, confirm, stage).insert_char(c)
+                    }
+                    _ => {}
+                }
+            }
+            AppState::ExportEntry {
+                platform,
+                user_id,
+                recipient,
+                path,
+                stage,
+            } => match key.code {
+                KeyCode::Esc => transition_to_main = true,
+                KeyCode::Enter => match stage {
+                    ExportEntryStage::Recipient => *stage = ExportEntryStage::Path,
+                    ExportEntryStage::Path => {
+                        match export_one_entry(platform, user_id, &recipient.value, &path.value) {
+                            Ok(_) => self.show_toast("Export written!"),
+                            Err(e) => self.auth_error = Some(e),
+                        }
+                        transition_to_main = true;
+                    }
+                },
+                KeyCode::Up => *stage = ExportEntryStage::Recipient,
+                KeyCode::Down => *stage = ExportEntryStage::Path,
+                KeyCode::Left => active_export_input(recipient, path, stage).move_cursor_left(),
+                KeyCode::Right => active_export_input(recipient, path, stage).move_cursor_right(),
+                KeyCode::Backspace => active_export_input(recipient, path, stage).delete_char(),
+                KeyCode::Char(c) => active_export_input(recipient, path, stage).insert_char(c),
+                _ => {}
+            },
+            AppState::ImportExport { path } => match key.code {
+                KeyCode::Esc => transition_to_main = true,
+                KeyCode::Enter => match preview_import_conflicts(&path.value) {
+                    Ok(0) => {
+                        match import_export_file(&path.value, false, false) {
+                            Ok((imported, skipped)) => {
+                                self.show_toast(&format!("Imported {imported}, skipped {skipped}"));
+                            }
+                            Err(e) => self.auth_error = Some(e),
+                        }
+                        transition_to_main = true;
+                    }
+                    Ok(conflicts) => {
+                        self.state = AppState::ImportExportConfirm {
+                            path: path.value.clone(),
+                            conflicts,
+                        };
+                    }
+                    Err(e) => {
+                        self.auth_error = Some(e);
+                        transition_to_main = true;
+                    }
+                },
+                KeyCode::Left => path.move_cursor_left(),
+                KeyCode::Right => path.move_cursor_right(),
+                KeyCode::Backspace => path.delete_char(),
+                KeyCode::Char(c) => path.insert_char(c),
+                _ => {}
+            },
+            AppState::ImportExportConfirm { path, conflicts } => match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => {
+                    match import_export_file(path, true, false) {
+                        Ok((imported, skipped)) => {
+                            self.show_toast(&format!("Imported {imported}, skipped {skipped}"));
+                        }
+                        Err(e) => self.auth_error = Some(e),
+                    }
+                    transition_to_main = true;
+                }
+                KeyCode::Char('n') => {
+                    match import_export_file(path, false, true) {
+                        Ok((imported, skipped)) => {
+                            self.show_toast(&format!("Imported {imported}, skipped {skipped}"));
+                        }
+                        Err(e) => self.auth_error = Some(e),
+                    }
+                    transition_to_main = true;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => transition_to_main = true,
+                _ => {
+                    let _ = conflicts;
+                }
+            },
         }
 
         if transition_to_main {
@@ -779,5 +1042,172 @@ impl App {
         }
 
         Ok(false)
+    }
+}
+
+fn active_backup_create_input<'a>(
+    path: &'a mut InputState,
+    password: &'a mut InputState,
+    stage: &BackupCreateStage,
+) -> &'a mut InputState {
+    match stage {
+        BackupCreateStage::Path => path,
+        BackupCreateStage::Password => password,
+    }
+}
+
+fn verify_backup_master_password(
+    config: &config::Config,
+    master_password: &str,
+) -> Result<(), String> {
+    let stored_hash = config
+        .master_password_hash
+        .as_deref()
+        .ok_or_else(|| "RVault not set up.".to_string())?;
+    if crypto::verify_password(master_password.as_bytes(), stored_hash) {
+        Ok(())
+    } else {
+        Err("Invalid Password".to_string())
+    }
+}
+
+fn active_backup_restore_input<'a>(
+    path: &'a mut InputState,
+    password: &'a mut InputState,
+    confirm: &'a mut InputState,
+    stage: &BackupRestoreStage,
+) -> &'a mut InputState {
+    match stage {
+        BackupRestoreStage::Path => path,
+        BackupRestoreStage::Password => password,
+        BackupRestoreStage::Confirm => confirm,
+    }
+}
+
+fn active_export_input<'a>(
+    recipient: &'a mut InputState,
+    path: &'a mut InputState,
+    stage: &ExportEntryStage,
+) -> &'a mut InputState {
+    match stage {
+        ExportEntryStage::Recipient => recipient,
+        ExportEntryStage::Path => path,
+    }
+}
+
+fn export_one_entry(
+    platform: &str,
+    user_id: &str,
+    recipient: &str,
+    path: &str,
+) -> Result<(), String> {
+    let db = Database::new().map_err(|e| e.to_string())?;
+    let table = Table::new(&db, None).map_err(|e| e.to_string())?;
+    let key = get_key_from_session()?;
+    let password = table
+        .retrieve_password_with_key(&db, &key, platform.to_string(), user_id.to_string())
+        .map_err(|e| e.to_string())?;
+    let meta = table
+        .list(&db)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|entry| entry.platform == platform && entry.user_id == user_id);
+    let entry = portable_export::ExportEntry {
+        platform: platform.to_string(),
+        user_id: user_id.to_string(),
+        password,
+        pinned: meta.as_ref().map(|entry| entry.pinned).unwrap_or(false),
+        created_at: meta.as_ref().map(|entry| entry.created_at).unwrap_or(0),
+        updated_at: meta.as_ref().map(|entry| entry.updated_at).unwrap_or(0),
+    };
+    let bytes = portable_export::create_export_bytes(recipient, &[entry])?;
+    std::fs::write(path, bytes).map_err(|e| format!("write export: {e}"))
+}
+
+fn preview_import_conflicts(path: &str) -> Result<usize, String> {
+    let entries = decrypt_export_file(path)?;
+    let db = Database::new().map_err(|e| e.to_string())?;
+    let table = Table::new(&db, None).map_err(|e| e.to_string())?;
+    entries.iter().try_fold(0, |count, entry| {
+        table
+            .entry_exists(&db, &entry.platform, &entry.user_id)
+            .map(|exists| count + usize::from(exists))
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn import_export_file(
+    path: &str,
+    overwrite_all: bool,
+    skip_all: bool,
+) -> Result<(usize, usize), String> {
+    let entries = decrypt_export_file(path)?;
+    let db = Database::new().map_err(|e| e.to_string())?;
+    let table = Table::new(&db, None).map_err(|e| e.to_string())?;
+    let key = get_key_from_session()?;
+    let mut imported = 0;
+    let mut skipped = 0;
+    for entry in entries {
+        let exists = table
+            .entry_exists(&db, &entry.platform, &entry.user_id)
+            .map_err(|e| e.to_string())?;
+        if exists && skip_all {
+            skipped += 1;
+            continue;
+        }
+        if exists && !overwrite_all {
+            skipped += 1;
+            continue;
+        }
+        table
+            .import_entry_with_key_result(&db, &key, &entry)
+            .map_err(|e| e.to_string())?;
+        imported += 1;
+    }
+    Ok((imported, skipped))
+}
+
+fn decrypt_export_file(path: &str) -> Result<Vec<portable_export::ExportEntry>, String> {
+    let key = get_key_from_session()?;
+    let id = identity::load_or_create_identity(&key)?;
+    let bytes = std::fs::read(path).map_err(|e| format!("read export: {e}"))?;
+    portable_export::decrypt_export_bytes(&id, &bytes)
+}
+
+fn sanitize_file_name(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let sanitized = sanitized.trim_matches('_');
+    if sanitized.is_empty() {
+        "rvault-export".to_string()
+    } else {
+        sanitized.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_master_password_validation_rejects_wrong_password() {
+        let hash = crypto::hash_data(b"correct-password")
+            .expect("hash password")
+            .hash;
+        let config = config::Config {
+            master_password_hash: Some(hash),
+            ..Default::default()
+        };
+
+        assert!(verify_backup_master_password(&config, "correct-password").is_ok());
+        assert!(verify_backup_master_password(&config, "wrong-password").is_err());
     }
 }

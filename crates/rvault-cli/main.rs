@@ -3,12 +3,20 @@ mod extension_api;
 mod host;
 mod native;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{BackupCommands, Cli, Commands};
 use clap::Parser;
+use std::{
+    fs,
+    io::{self, Write},
+    path::Path,
+};
 
 // Import everything needed from the new library
 use rvault_core::keystore::keystore_path;
-use rvault_core::{clipboard, config, crypto, keystore, session, storage, storage::Table, vault}; // Special case import for path
+use rvault_core::{
+    backup, clipboard, config, crypto, identity, keystore, portable_export, session, storage,
+    storage::Table, vault,
+}; // Special case import for path
 
 fn main() {
     let first_arg = std::env::args().nth(1);
@@ -115,6 +123,10 @@ fn main() {
             }
             return;
         }
+        Commands::Backup { command } => {
+            handle_backup_command(command, &config);
+            return;
+        }
         Commands::Browser { .. } | Commands::Host { .. } => false,
         _ => true,
     };
@@ -187,6 +199,231 @@ fn main() {
                 }
             }
         }
+        Commands::Identity {} => match identity::load_or_create_identity(&ek) {
+            Ok(identity) => println!("{}", identity::public_code_from_key(&identity.public_key)),
+            Err(e) => eprintln!("Error: {e}"),
+        },
+        Commands::Export {
+            to,
+            entry,
+            selected,
+            out,
+            vault,
+        } => match collect_export_selectors(entry, selected) {
+            Ok(selectors) => {
+                let db = storage::Database::new().unwrap();
+                match Table::new(&db, vault) {
+                    Ok(table) => match build_export_entries(&db, &table, &ek, &selectors) {
+                        Ok(entries) => match portable_export::create_export_bytes(&to, &entries) {
+                            Ok(bytes) => match fs::write(&out, bytes) {
+                                Ok(_) => println!("Encrypted export written to {out}"),
+                                Err(e) => eprintln!("Error writing export: {e}"),
+                            },
+                            Err(e) => eprintln!("Error creating export: {e}"),
+                        },
+                        Err(e) => eprintln!("Error reading entries: {e}"),
+                    },
+                    Err(e) => eprintln!("Error opening vault: {e}"),
+                }
+            }
+            Err(e) => eprintln!("Error: {e}"),
+        },
+        Commands::Import {
+            path,
+            vault,
+            overwrite_all,
+            skip_all,
+        } => {
+            if overwrite_all && skip_all {
+                eprintln!("Error: --overwrite-all and --skip-all cannot be used together.");
+                return;
+            }
+            let db = storage::Database::new().unwrap();
+            match Table::new(&db, vault) {
+                Ok(table) => {
+                    match import_entries_from_file(&db, &table, &ek, &path, overwrite_all, skip_all)
+                    {
+                        Ok((imported, skipped)) => {
+                            println!("Imported {imported} entries. Skipped {skipped} entries.")
+                        }
+                        Err(e) => eprintln!("Error importing export: {e}"),
+                    }
+                }
+                Err(e) => eprintln!("Error opening vault: {e}"),
+            }
+        }
         _ => todo!(),
+    }
+}
+
+fn handle_backup_command(command: &BackupCommands, config: &config::Config) {
+    match command {
+        BackupCommands::Create { out } => {
+            let Some(stored_hash) = config.master_password_hash.as_deref() else {
+                eprintln!("❌ RVault has not been set up. Please run 'rvault setup' first.");
+                return;
+            };
+            let master_password =
+                rpassword::prompt_password("Enter Master Password for backup: ").unwrap();
+            if let Err(e) = vault::Vault::get_encryption_key(&master_password, stored_hash) {
+                eprintln!("❌ Backup failed: {e}");
+                return;
+            }
+            match backup::create_backup_file(&master_password, Path::new(out)) {
+                Ok(_) => println!("Encrypted backup written to {out}"),
+                Err(e) => eprintln!("❌ Backup failed: {e}"),
+            }
+        }
+        BackupCommands::Restore { path, yes } => {
+            if !yes && !confirm_restore() {
+                println!("Restore cancelled.");
+                return;
+            }
+            let master_password = rpassword::prompt_password("Enter backup password: ").unwrap();
+            match backup::restore_backup_file(&master_password, Path::new(path)) {
+                Ok(_) => println!("Backup restored. RVault local data was replaced."),
+                Err(e) => eprintln!("❌ Restore failed: {e}"),
+            }
+        }
+    }
+}
+
+fn confirm_restore() -> bool {
+    print!("This will replace local RVault data. Type RESTORE to continue: ");
+    let _ = io::stdout().flush();
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    input.trim() == "RESTORE"
+}
+
+fn collect_export_selectors(
+    entry: Option<Vec<String>>,
+    selected: Vec<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut selectors = Vec::new();
+    if let Some(entry) = entry {
+        if entry.len() != 2 {
+            return Err("--entry requires PLATFORM and USER_ID".to_string());
+        }
+        selectors.push((entry[0].clone(), entry[1].clone()));
+    }
+
+    for selector in selected {
+        let (platform, user_id) = selector
+            .split_once(':')
+            .ok_or_else(|| format!("invalid selector '{selector}', expected PLATFORM:USER_ID"))?;
+        selectors.push((platform.to_string(), user_id.to_string()));
+    }
+
+    if selectors.is_empty() {
+        return Err(
+            "nothing selected; pass --entry PLATFORM USER_ID or --selected PLATFORM:USER_ID"
+                .to_string(),
+        );
+    }
+
+    Ok(selectors)
+}
+
+fn build_export_entries(
+    db: &storage::Database,
+    table: &Table,
+    encryption_key: &[u8],
+    selectors: &[(String, String)],
+) -> Result<Vec<portable_export::ExportEntry>, String> {
+    let metadata = table.list(db).map_err(|e| e.to_string())?;
+    selectors
+        .iter()
+        .map(|(platform, user_id)| {
+            let password = table
+                .retrieve_password_with_key(db, encryption_key, platform.clone(), user_id.clone())
+                .map_err(|e| e.to_string())?;
+            let meta = metadata
+                .iter()
+                .find(|entry| entry.platform == *platform && entry.user_id == *user_id);
+            Ok(portable_export::ExportEntry {
+                platform: platform.clone(),
+                user_id: user_id.clone(),
+                password,
+                pinned: meta.map(|entry| entry.pinned).unwrap_or(false),
+                created_at: meta.map(|entry| entry.created_at).unwrap_or(0),
+                updated_at: meta.map(|entry| entry.updated_at).unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+fn import_entries_from_file(
+    db: &storage::Database,
+    table: &Table,
+    encryption_key: &[u8],
+    path: &str,
+    overwrite_all: bool,
+    skip_all: bool,
+) -> Result<(usize, usize), String> {
+    let identity = identity::load_or_create_identity(encryption_key)?;
+    let bytes = fs::read(path).map_err(|e| format!("read export: {e}"))?;
+    let entries = portable_export::decrypt_export_bytes(&identity, &bytes)?;
+    let mut imported = 0;
+    let mut skipped = 0;
+
+    for entry in entries {
+        let exists = table
+            .entry_exists(db, &entry.platform, &entry.user_id)
+            .map_err(|e| e.to_string())?;
+        let should_import = if exists {
+            if skip_all {
+                false
+            } else if overwrite_all {
+                true
+            } else {
+                match prompt_import_conflict(&entry)? {
+                    ImportChoice::Overwrite => true,
+                    ImportChoice::Skip => false,
+                    ImportChoice::Cancel => return Err("import cancelled".to_string()),
+                }
+            }
+        } else {
+            true
+        };
+
+        if should_import {
+            table
+                .import_entry_with_key_result(db, encryption_key, &entry)
+                .map_err(|e| e.to_string())?;
+            imported += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+
+    Ok((imported, skipped))
+}
+
+enum ImportChoice {
+    Overwrite,
+    Skip,
+    Cancel,
+}
+
+fn prompt_import_conflict(entry: &portable_export::ExportEntry) -> Result<ImportChoice, String> {
+    loop {
+        print!(
+            "Entry {} / {} already exists. [o]verwrite, [s]kip, [c]ancel: ",
+            entry.platform, entry.user_id
+        );
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| format!("read conflict choice: {e}"))?;
+        match input.trim().to_lowercase().as_str() {
+            "o" | "overwrite" => return Ok(ImportChoice::Overwrite),
+            "s" | "skip" => return Ok(ImportChoice::Skip),
+            "c" | "cancel" => return Ok(ImportChoice::Cancel),
+            _ => eprintln!("Please enter o, s, or c."),
+        }
     }
 }

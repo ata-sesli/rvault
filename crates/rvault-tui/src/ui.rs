@@ -1,4 +1,7 @@
-use crate::app::{AddEntryStage, App, AppState, EditEntryStage, SetupStage, SortMode}; // Added EditEntryStage
+use crate::app::{
+    AddEntryStage, App, AppState, BackupCreateStage, BackupRestoreStage, EditEntryStage,
+    ExportEntryStage, SetupStage, SortMode,
+}; // Added EditEntryStage
 use crate::input::InputState; // Import InputState
 use chrono::{DateTime, Local};
 use ratatui::{
@@ -176,6 +179,28 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             password,
             stage,
         } => draw_add_entry(f, platform, user_id, password, stage, theme),
+        AppState::BackupCreate {
+            path,
+            password,
+            stage,
+        } => draw_backup_create(f, path, password, stage, theme),
+        AppState::BackupRestore {
+            path,
+            password,
+            confirm,
+            stage,
+        } => draw_backup_restore(f, path, password, confirm, stage, theme),
+        AppState::ExportEntry {
+            platform,
+            user_id,
+            recipient,
+            path,
+            stage,
+        } => draw_export_entry(f, platform, user_id, recipient, path, stage, theme),
+        AppState::ImportExport { path } => draw_import_export(f, path, theme),
+        AppState::ImportExportConfirm { path: _, conflicts } => {
+            draw_import_confirm(f, *conflicts, theme)
+        }
         AppState::ThemeSelection => draw_theme_selection(f, &app.themes, theme),
         AppState::SortSelection => draw_sort_selection(f, &app.sort_mode, theme),
     }
@@ -533,7 +558,7 @@ fn draw_main(
     draw_help(
         f,
         chunks[2],
-        "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Edit: e | Delete: d | Switch Tab: Tab | Themes: t | Sort: S | Lock: Q | Quit: q",
+        "Navigate: ↑/↓ | Copy: Enter | Pin: p | Add: a | Export: x | Import: m | Backup: b | Restore: r | Identity: i | Sort: S | Lock: Q | Quit: q",
         theme,
     );
 }
@@ -852,6 +877,234 @@ fn draw_add_entry(
         true,
         theme,
     ); // Masked
+}
+
+fn draw_backup_create(
+    f: &mut Frame,
+    path: &InputState,
+    password: &InputState,
+    stage: &BackupCreateStage,
+    theme: &Theme,
+) {
+    let area = centered_rect_fixed(58, 12, f.area());
+    draw_two_field_modal(
+        f,
+        area,
+        " 💾 Create Backup ",
+        (
+            "Path",
+            path,
+            matches!(stage, BackupCreateStage::Path),
+            false,
+        ),
+        (
+            "Master Password",
+            password,
+            matches!(stage, BackupCreateStage::Password),
+            true,
+        ),
+        theme,
+    );
+}
+
+fn draw_backup_restore(
+    f: &mut Frame,
+    path: &InputState,
+    password: &InputState,
+    confirm: &InputState,
+    stage: &BackupRestoreStage,
+    theme: &Theme,
+) {
+    let area = centered_rect_fixed(58, 16, f.area());
+    draw_shadow(f, area);
+    let block = Block::default()
+        .title(" ⬆ Restore Backup ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.error))
+        .style(Style::default().bg(theme.surface).fg(theme.text));
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    draw_input_box(
+        f,
+        chunks[0],
+        "Path",
+        path,
+        "backup.rvault-backup",
+        matches!(stage, BackupRestoreStage::Path),
+        false,
+        theme,
+    );
+    draw_input_box(
+        f,
+        chunks[2],
+        "Backup Password",
+        password,
+        "••••••••",
+        matches!(stage, BackupRestoreStage::Password),
+        true,
+        theme,
+    );
+    draw_input_box(
+        f,
+        chunks[4],
+        "Type RESTORE",
+        confirm,
+        "RESTORE",
+        matches!(stage, BackupRestoreStage::Confirm),
+        false,
+        theme,
+    );
+}
+
+fn draw_export_entry(
+    f: &mut Frame,
+    platform: &str,
+    user_id: &str,
+    recipient: &InputState,
+    path: &InputState,
+    stage: &ExportEntryStage,
+    theme: &Theme,
+) {
+    let area = centered_rect_fixed(62, 15, f.area());
+    draw_shadow(f, area);
+    let block = Block::default()
+        .title(" 📤 Export Entry ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.surface).fg(theme.text));
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    let selected = Paragraph::new(Line::from(vec![
+        Span::styled(platform, Style::default().fg(theme.accent)),
+        Span::raw(" / "),
+        Span::styled(user_id, Style::default().fg(theme.text)),
+    ]))
+    .style(Style::default().bg(theme.surface));
+    f.render_widget(selected, chunks[0]);
+    draw_input_box(
+        f,
+        chunks[1],
+        "Recipient Identity",
+        recipient,
+        "rvault1-...",
+        matches!(stage, ExportEntryStage::Recipient),
+        false,
+        theme,
+    );
+    draw_input_box(
+        f,
+        chunks[3],
+        "Output Path",
+        path,
+        "entry.rvault-export",
+        matches!(stage, ExportEntryStage::Path),
+        false,
+        theme,
+    );
+}
+
+fn draw_import_export(f: &mut Frame, path: &InputState, theme: &Theme) {
+    let area = centered_rect_fixed(58, 9, f.area());
+    draw_shadow(f, area);
+    let block = Block::default()
+        .title(" 📥 Import Export ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.surface).fg(theme.text));
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([Constraint::Length(3)])
+        .split(area);
+    draw_input_box(
+        f,
+        chunks[0],
+        "Path",
+        path,
+        "file.rvault-export",
+        true,
+        false,
+        theme,
+    );
+}
+
+fn draw_import_confirm(f: &mut Frame, conflicts: usize, theme: &Theme) {
+    let area = centered_rect_fixed(50, 8, f.area());
+    draw_shadow(f, area);
+    let block = Block::default()
+        .title(" Import Conflicts ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.warning))
+        .style(Style::default().bg(theme.surface).fg(theme.text));
+    let text = vec![
+        Line::from(format!("{conflicts} entries already exist.")),
+        Line::from(""),
+        Line::from("[Enter/y] overwrite conflicts   [n] skip conflicts"),
+    ];
+    let p = Paragraph::new(text)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(Clear, area);
+    f.render_widget(p, area);
+}
+
+fn draw_two_field_modal(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    first: (&str, &InputState, bool, bool),
+    second: (&str, &InputState, bool, bool),
+    theme: &Theme,
+) {
+    draw_shadow(f, area);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.surface).fg(theme.text));
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    draw_input_box(f, chunks[0], first.0, first.1, "", first.2, first.3, theme);
+    draw_input_box(
+        f, chunks[2], second.0, second.1, "", second.2, second.3, theme,
+    );
 }
 
 fn draw_tabs(f: &mut Frame, area: Rect, index: usize, theme: &Theme) {

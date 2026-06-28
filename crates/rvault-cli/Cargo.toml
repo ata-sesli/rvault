@@ -18,6 +18,7 @@ rvault-tui = { path = "../rvault-tui" }
 
 
 clap = { version = "4.5.41", features = ["derive"] }
+base64 = "0.22.1"
 rpassword = "7.4.0"                                  
 rustyline = "16.0.0"                                
 serde = { version = "1.0.219", features = ["derive"] }

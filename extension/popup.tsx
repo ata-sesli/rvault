@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
   CheckCircle2,
   Copy,
+  Download,
+  Fingerprint,
+  FileUp,
   KeyRound,
   Lock,
   LogOut,
@@ -16,6 +19,7 @@ import {
   Search,
   Trash2,
   Unlock,
+  Upload,
   UserRound,
   Wand2,
   X
@@ -54,6 +58,21 @@ type DetectedForm = {
   username: string
   password: string
 }
+type TransferStart = {
+  token: string
+  size: number
+  fileName: string
+  chunkSize: number
+}
+type DownloadChunk = {
+  contentBase64: string
+  nextOffset: number
+  done: boolean
+}
+type ImportPreview = {
+  entries: VaultEntry[]
+  conflicts: Array<{ platform: string; userId: string }>
+}
 
 type Status = "checking" | "locked" | "unlocked" | "setup_required" | "error"
 type Notice = { text: string; tone: "info" | "success" | "error" }
@@ -72,6 +91,8 @@ function Popup() {
   const [userId, setUserId] = useState("")
   const [password, setPassword] = useState("")
   const [form, setForm] = useState<DetectedForm | null>(null)
+  const backupRestoreInputRef = useRef<HTMLInputElement>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const canSave = platform.trim() && userId.trim() && password
   const sortedEntries = useMemo(() => sortEntries(entries, sort), [entries, sort])
@@ -257,6 +278,100 @@ function Popup() {
       showNotice("Username copied", "success")
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "Copy failed.", "error")
+    }
+  }
+
+  async function copyIdentity() {
+    try {
+      const data = await sendHostRequest<{ publicCode: string }>({ type: "identity" })
+      await copyTextToClipboard(data.publicCode)
+      showNotice("Identity copied", "success")
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "Identity failed.", "error")
+    }
+  }
+
+  async function createBackup() {
+    const masterPassword = window.prompt("Master password for encrypted backup")
+    if (!masterPassword) return
+
+    try {
+      const transfer = await sendHostRequest<TransferStart>(
+        createHostRequest("backupCreate", { masterPassword })
+      )
+      await downloadTransfer(transfer)
+      await finishTransfer(transfer.token)
+      showNotice("Backup downloaded", "success")
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "Backup failed.", "error")
+    }
+  }
+
+  async function restoreBackup(file: File) {
+    const confirmed = window.confirm("Restore will replace local RVault data. Continue?")
+    if (!confirmed) return
+    const masterPassword = window.prompt("Backup password")
+    if (!masterPassword) return
+
+    try {
+      const token = await uploadTransfer(file)
+      await sendHostRequest<{ restored: boolean }>(
+        createHostRequest("backupRestore", { masterPassword, token })
+      )
+      await finishTransfer(token)
+      clearUnlockedState()
+      setStatus("locked")
+      showNotice("Backup restored. Unlock again.", "success")
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "Restore failed.", "error")
+    }
+  }
+
+  async function exportEntry(entry: VaultEntry) {
+    const to = window.prompt("Recipient RVault identity")
+    if (!to) return
+
+    try {
+      const transfer = await sendHostRequest<TransferStart>(
+        createHostRequest("export", {
+          to,
+          entries: [{ platform: entry.platform, userId: entry.userId }]
+        })
+      )
+      await downloadTransfer({
+        ...transfer,
+        fileName: `${sanitizeFileName(entry.platform)}.rvault-export`
+      })
+      await finishTransfer(transfer.token)
+      setMenuEntry(null)
+      showNotice("Export downloaded", "success")
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "Export failed.", "error")
+    }
+  }
+
+  async function importExport(file: File) {
+    try {
+      const token = await uploadTransfer(file)
+      const preview = await sendHostRequest<ImportPreview>(
+        createHostRequest("importPreview", { token })
+      )
+      const conflictCount = preview.conflicts.length
+      const overwriteAll = conflictCount > 0
+        ? window.confirm(`${conflictCount} entries already exist. OK overwrites them, Cancel skips them.`)
+        : false
+      const result = await sendHostRequest<{ imported: number; skipped: number }>(
+        createHostRequest("importApply", {
+          token,
+          overwriteAll,
+          skipAll: conflictCount > 0 && !overwriteAll
+        })
+      )
+      await finishTransfer(token)
+      await refreshEntries()
+      showNotice(`Imported ${result.imported}, skipped ${result.skipped}`, "success")
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "Import failed.", "error")
     }
   }
 
@@ -490,6 +605,10 @@ function Popup() {
                   <UserRound size={13} />
                   Username
                 </button>
+                <button onClick={() => void exportEntry(menuEntry)}>
+                  <Download size={13} />
+                  Export
+                </button>
                 <button onClick={() => editEntry(menuEntry)}>
                   <Pencil size={13} />
                   Edit
@@ -565,6 +684,44 @@ function Popup() {
                 <Plus size={14} />
                 New entry
               </button>
+              <button className="secondary" onClick={() => void copyIdentity()}>
+                <Fingerprint size={14} />
+                Identity
+              </button>
+              <button className="secondary" onClick={() => void createBackup()}>
+                <Download size={14} />
+                Backup
+              </button>
+              <button className="secondary" onClick={() => backupRestoreInputRef.current?.click()}>
+                <Upload size={14} />
+                Restore
+              </button>
+              <button className="secondary" onClick={() => importInputRef.current?.click()}>
+                <FileUp size={14} />
+                Import
+              </button>
+              <input
+                ref={backupRestoreInputRef}
+                hidden
+                type="file"
+                accept=".rvault-backup"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0]
+                  event.currentTarget.value = ""
+                  if (file) void restoreBackup(file)
+                }}
+              />
+              <input
+                ref={importInputRef}
+                hidden
+                type="file"
+                accept=".rvault-export"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0]
+                  event.currentTarget.value = ""
+                  if (file) void importExport(file)
+                }}
+              />
             </section>
           )}
         </>
@@ -592,6 +749,80 @@ async function sendActiveTabMessage<T>(message: unknown): Promise<T | null> {
 
 function entryKey(entry: VaultEntry): string {
   return `${entry.platform}:${entry.userId}`
+}
+
+async function downloadTransfer(transfer: TransferStart) {
+  const chunks: Uint8Array[] = []
+  let offset = 0
+  while (offset < transfer.size) {
+    const chunk = await sendHostRequest<DownloadChunk>(
+      createHostRequest("downloadChunk", {
+        token: transfer.token,
+        offset,
+        length: transfer.chunkSize
+      })
+    )
+    chunks.push(base64ToBytes(chunk.contentBase64))
+    offset = chunk.nextOffset
+    if (chunk.done) break
+  }
+
+  const blob = new Blob(chunks, { type: "application/octet-stream" })
+  const url = URL.createObjectURL(blob)
+  try {
+    await chrome.downloads.download({
+      url,
+      filename: transfer.fileName,
+      saveAs: true
+    })
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+async function uploadTransfer(file: File): Promise<string> {
+  const { token } = await sendHostRequest<{ token: string }>({ type: "uploadStart" })
+  const chunkSize = 512 * 1024
+  for (let offset = 0; offset < file.size; offset += chunkSize) {
+    const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size))
+    const bytes = new Uint8Array(await chunk.arrayBuffer())
+    await sendHostRequest<{ uploaded: number }>(
+      createHostRequest("uploadChunk", {
+        token,
+        contentBase64: bytesToBase64(bytes)
+      })
+    )
+  }
+  return token
+}
+
+async function finishTransfer(token: string) {
+  await sendHostRequest<{ removed: boolean }>(
+    createHostRequest("transferFinish", { token })
+  )
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ""
+  const chunkSize = 0x8000
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+function sanitizeFileName(value: string): string {
+  return value.replace(/[^a-z0-9_.-]+/gi, "_").replace(/^_+|_+$/g, "") || "rvault-export"
 }
 
 function SortArrow({

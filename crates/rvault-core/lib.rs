@@ -5,13 +5,18 @@
 pub mod config;
 pub mod error;
 
+pub mod backup;
+pub mod binary;
+
 // Cryptography and Key Management
 pub mod crypto;
+pub mod identity;
 pub mod keystore;
 // If keystore_bin.rs doesn't exist, remove this line
 // and fix the imports in your other files.
 
 // Session, Data, and Vault Management
+pub mod portable_export;
 pub mod session;
 pub mod storage;
 pub mod vault;

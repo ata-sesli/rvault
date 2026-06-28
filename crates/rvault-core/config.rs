@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -62,5 +62,15 @@ impl Config {
         } else {
             Err(ConfigError::Path)
         }
+    }
+}
+
+pub fn config_path() -> Result<PathBuf, ConfigError> {
+    if let Some(project_dirs) = ProjectDirs::from("io.github", "ata-sesli", "RVault") {
+        let config_dir = project_dirs.config_dir();
+        let _ = fs::create_dir_all(config_dir);
+        Ok(config_dir.join("config.json"))
+    } else {
+        Err(ConfigError::Path)
     }
 }
