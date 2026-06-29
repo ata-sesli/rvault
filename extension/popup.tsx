@@ -523,6 +523,9 @@ function Popup() {
               <button className="icon-button" title="Refresh entries" onClick={refreshEntries}>
                 <RefreshCw size={15} />
               </button>
+              <button className="icon-button accent-icon" title="New entry" onClick={createBlankEntry}>
+                <Plus size={15} />
+              </button>
             </div>
             <div className="sort-buttons" aria-label="Sort entries">
               <button
@@ -671,6 +674,12 @@ function Popup() {
                 </div>
               </label>
               <div className="actions">
+                {mode === "edit" && selected ? (
+                  <button className="secondary danger" title="Delete entry" onClick={() => void deleteEntry(selected)}>
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                ) : null}
                 <button className="secondary" onClick={clearEditor}>Cancel</button>
                 <button className="primary" disabled={!canSave} onClick={() => void saveEntry()}>
                   <Save size={15} />
@@ -1017,7 +1026,7 @@ const styles = `
   }
   .search-row {
     display: grid;
-    grid-template-columns: 16px 1fr 28px;
+    grid-template-columns: 16px 1fr 28px 28px;
     align-items: center;
     gap: 7px;
     min-height: 34px;
@@ -1039,6 +1048,9 @@ const styles = `
     border: 0;
     background: transparent;
     color: var(--rv-muted);
+  }
+  .search-row .accent-icon {
+    color: var(--rv-accent);
   }
   .sort-buttons {
     display: grid;
@@ -1168,7 +1180,7 @@ const styles = `
   }
   .entry-action-buttons {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
   }
   .entry-action-buttons button {
