@@ -22,6 +22,10 @@ fn legacy_signatures_remain_available_in_1x() {
     let _: fn(&[u8]) -> Result<String, std::io::Error> = start_session;
     let _: fn() -> Result<Vec<u8>, String> = get_key_from_session;
     let _: fn() -> Result<(), String> = rvault_core::lock;
+    let _: fn() -> Result<std::path::PathBuf, String> = rvault_core::backup::default_backup_dir;
+    let _: fn(&str) -> Result<std::path::PathBuf, String> = rvault_core::backup::create_backup;
+    let _: fn(&str, &std::path::Path) -> Result<std::path::PathBuf, String> =
+        rvault_core::backup::create_backup_in_dir;
 
     let _: fn(&Table, &Database, String, String) = Table::add_entry;
     let _: fn(&Table, &Database, &[u8], String, String) = Table::add_entry_with_key;

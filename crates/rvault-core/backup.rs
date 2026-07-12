@@ -6,10 +6,12 @@ use crate::{
     keystore::keystore_path,
     storage::database_path,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use directories::UserDirs;
 use rand::RngCore;
 use std::{
-    fs,
+    fs::{self, File, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -62,8 +64,14 @@ pub fn validate_backup_envelope(bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn create_backup_file(master_password: &str, out_path: &Path) -> Result<(), String> {
+    let payload = collect_backup_payload()?;
+    let bytes = create_backup_bytes(master_password, &payload)?;
+    write_atomic(out_path, &bytes)
+}
+
+fn collect_backup_payload() -> Result<BackupPayload, String> {
     let _ = crate::storage::Database::new().map_err(|e| format!("open database: {e}"))?;
-    let payload = BackupPayload {
+    Ok(BackupPayload {
         created_at: Utc::now().timestamp(),
         config: fs::read(config_path().map_err(|e| e.to_string())?)
             .map_err(|e| format!("read config: {e}"))?,
@@ -75,9 +83,74 @@ pub fn create_backup_file(master_password: &str, out_path: &Path) -> Result<(), 
             }
             _ => None,
         },
-    };
+    })
+}
+
+pub fn default_backup_dir() -> Result<PathBuf, String> {
+    UserDirs::new()
+        .and_then(|dirs| dirs.document_dir().map(|path| path.join("rvault")))
+        .ok_or_else(|| "Could not find the user's Documents directory".to_string())
+}
+
+pub fn create_backup(master_password: &str) -> Result<PathBuf, String> {
+    create_backup_in_dir(master_password, &default_backup_dir()?)
+}
+
+pub fn create_backup_in_dir(
+    master_password: &str,
+    destination_dir: &Path,
+) -> Result<PathBuf, String> {
+    let payload = collect_backup_payload()?;
     let bytes = create_backup_bytes(master_password, &payload)?;
-    write_atomic(out_path, &bytes)
+    write_timestamped_backup_at(destination_dir, Utc::now(), |file| {
+        file.write_all(&bytes)?;
+        file.sync_all()
+    })
+}
+
+fn create_new_backup_output(
+    destination_dir: &Path,
+    now: DateTime<Utc>,
+) -> Result<(File, PathBuf), String> {
+    fs::create_dir_all(destination_dir)
+        .map_err(|error| format!("create backup directory: {error}"))?;
+    let timestamp = now.format("%Y%m%dT%H%M%SZ");
+    for suffix in 0_u64.. {
+        let name = if suffix == 0 {
+            format!("rvault-{timestamp}.rvb")
+        } else {
+            format!("rvault-{timestamp}-{suffix}.rvb")
+        };
+        let path = destination_dir.join(name);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((file, path)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("create backup file: {error}")),
+        }
+    }
+    unreachable!("u64 backup suffix space exhausted")
+}
+
+fn write_timestamped_backup_at<F>(
+    destination_dir: &Path,
+    now: DateTime<Utc>,
+    write: F,
+) -> Result<PathBuf, String>
+where
+    F: FnOnce(&mut File) -> Result<(), std::io::Error>,
+{
+    let (mut file, path) = create_new_backup_output(destination_dir, now)?;
+    if let Err(error) = write(&mut file) {
+        drop(file);
+        let cleanup = fs::remove_file(&path);
+        return match cleanup {
+            Ok(()) => Err(format!("write backup: {error}")),
+            Err(cleanup_error) => Err(format!(
+                "write backup: {error}; remove incomplete backup: {cleanup_error}"
+            )),
+        };
+    }
+    Ok(path)
 }
 
 pub fn restore_backup_file(master_password: &str, backup_path: &Path) -> Result<(), String> {
@@ -331,6 +404,7 @@ fn read_blob(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn payload() -> BackupPayload {
         BackupPayload {
@@ -375,6 +449,51 @@ mod tests {
         let err = validate_backup_envelope(&bytes).expect_err("wrong magic should fail");
 
         assert!(err.contains("magic"));
+    }
+
+    #[test]
+    fn timestamped_backup_names_use_rvb_and_increment_collisions() {
+        let root =
+            std::env::temp_dir().join(format!("rvault-backup-name-test-{}", rand::random::<u64>()));
+        fs::create_dir_all(&root).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 7, 12, 14, 30, 52).unwrap();
+
+        let first = create_new_backup_output(&root, now).unwrap();
+        assert_eq!(first.1.file_name().unwrap(), "rvault-20260712T143052Z.rvb");
+        drop(first.0);
+
+        let second = create_new_backup_output(&root, now).unwrap();
+        assert_eq!(
+            second.1.file_name().unwrap(),
+            "rvault-20260712T143052Z-1.rvb"
+        );
+        drop(second.0);
+
+        let third = create_new_backup_output(&root, now).unwrap();
+        assert_eq!(
+            third.1.file_name().unwrap(),
+            "rvault-20260712T143052Z-2.rvb"
+        );
+        drop(third.0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn timestamped_backup_write_removes_partial_file_on_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "rvault-backup-write-test-{}",
+            rand::random::<u64>()
+        ));
+        let now = Utc.with_ymd_and_hms(2026, 7, 12, 14, 30, 52).unwrap();
+        let error = write_timestamped_backup_at(&root, now, |_file| {
+            Err(std::io::Error::other("write failed"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("write failed"));
+        assert!(fs::read_dir(&root).unwrap().next().is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
