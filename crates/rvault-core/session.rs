@@ -208,11 +208,12 @@ pub fn get_key_from_session() -> Result<Vec<u8>, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "System clock error.".to_string())?
         .as_secs();
-    let legacy_timeout = if session_expiration_path(&session_dir, &token).exists() {
-        0
-    } else {
-        let config = Config::new().map_err(|e| format!("Failed to load config: {e}"))?;
-        config.session_timeout.parse::<u64>().unwrap_or(15) * 60
+    let legacy_timeout = match session_expiration_path(&session_dir, &token).try_exists() {
+        Ok(true) | Err(_) => 0,
+        Ok(false) => {
+            let config = Config::new().map_err(|e| format!("Failed to load config: {e}"))?;
+            config.session_timeout.parse::<u64>().unwrap_or(15) * 60
+        }
     };
     get_key_from_session_at(&session_dir, &token, now, legacy_timeout)
 }
@@ -229,50 +230,61 @@ fn get_key_from_session_at(
         return Err("Vault is locked. Invalid or expired session.".to_string());
     }
     let sidecar_path = session_expiration_path(session_dir, token);
-    if sidecar_path.exists() {
-        let metadata = fs::read(&sidecar_path)
-            .map_err(|error| format!("Invalid session metadata: {error}"))
-            .and_then(|bytes| {
-                serde_json::from_slice::<SessionExpiration>(&bytes)
-                    .map_err(|error| format!("Invalid session metadata: {error}"))
-            });
-        match metadata {
-            Ok(metadata)
-                if metadata.version == SESSION_METADATA_VERSION && now < metadata.expires_at => {}
-            Ok(metadata) if metadata.version != SESSION_METADATA_VERSION => {
-                let cleanup = cleanup_session_files(session_dir, token);
-                return Err(with_cleanup_error(
-                    "Invalid session metadata version".to_string(),
-                    cleanup,
-                ));
+    match sidecar_path.try_exists() {
+        Err(error) => {
+            let cleanup = cleanup_session_files(session_dir, token);
+            return Err(with_cleanup_error(
+                format!("Invalid session metadata: {error}"),
+                cleanup,
+            ));
+        }
+        Ok(true) => {
+            let metadata = fs::read(&sidecar_path)
+                .map_err(|error| format!("Invalid session metadata: {error}"))
+                .and_then(|bytes| {
+                    serde_json::from_slice::<SessionExpiration>(&bytes)
+                        .map_err(|error| format!("Invalid session metadata: {error}"))
+                });
+            match metadata {
+                Ok(metadata)
+                    if metadata.version == SESSION_METADATA_VERSION
+                        && now < metadata.expires_at => {}
+                Ok(metadata) if metadata.version != SESSION_METADATA_VERSION => {
+                    let cleanup = cleanup_session_files(session_dir, token);
+                    return Err(with_cleanup_error(
+                        "Invalid session metadata version".to_string(),
+                        cleanup,
+                    ));
+                }
+                Ok(_) => {
+                    let cleanup = cleanup_session_files(session_dir, token);
+                    return Err(with_cleanup_error(
+                        "Vault is locked. Your session has expired.".to_string(),
+                        cleanup,
+                    ));
+                }
+                Err(error) => {
+                    let cleanup = cleanup_session_files(session_dir, token);
+                    return Err(with_cleanup_error(error, cleanup));
+                }
             }
-            Ok(_) => {
+        }
+        Ok(false) => {
+            let modified = fs::metadata(&key_path)
+                .and_then(|metadata| metadata.modified())
+                .and_then(|time| {
+                    time.duration_since(UNIX_EPOCH)
+                        .map_err(std::io::Error::other)
+                })
+                .map_err(|error| format!("Failed to read session metadata: {error}"))?
+                .as_secs();
+            if now.saturating_sub(modified) > legacy_timeout_seconds {
                 let cleanup = cleanup_session_files(session_dir, token);
                 return Err(with_cleanup_error(
                     "Vault is locked. Your session has expired.".to_string(),
                     cleanup,
                 ));
             }
-            Err(error) => {
-                let cleanup = cleanup_session_files(session_dir, token);
-                return Err(with_cleanup_error(error, cleanup));
-            }
-        }
-    } else {
-        let modified = fs::metadata(&key_path)
-            .and_then(|metadata| metadata.modified())
-            .and_then(|time| {
-                time.duration_since(UNIX_EPOCH)
-                    .map_err(std::io::Error::other)
-            })
-            .map_err(|error| format!("Failed to read session metadata: {error}"))?
-            .as_secs();
-        if now.saturating_sub(modified) > legacy_timeout_seconds {
-            let cleanup = cleanup_session_files(session_dir, token);
-            return Err(with_cleanup_error(
-                "Vault is locked. Your session has expired.".to_string(),
-                cleanup,
-            ));
         }
     }
     fs::read(key_path).map_err(|error| format!("Failed to read session key: {error}"))
