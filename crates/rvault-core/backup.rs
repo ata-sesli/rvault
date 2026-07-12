@@ -14,6 +14,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod sqlite_snapshot;
+
 const BACKUP_SALT_LEN: usize = 16;
 const BACKUP_PAYLOAD_MAGIC: &[u8; 8] = b"RVBKPAY1";
 
@@ -66,8 +68,9 @@ pub fn create_backup_file(master_password: &str, out_path: &Path) -> Result<(), 
         config: fs::read(config_path().map_err(|e| e.to_string())?)
             .map_err(|e| format!("read config: {e}"))?,
         keystore: fs::read(keystore_path()?).map_err(|e| format!("read keystore: {e}"))?,
-        database: fs::read(database_path().map_err(|e| e.to_string())?)
-            .map_err(|e| format!("read database: {e}"))?,
+        database: sqlite_snapshot::snapshot_database(
+            &database_path().map_err(|e| e.to_string())?,
+        )?,
         identity: match identity_path() {
             Ok(path) if path.exists() => {
                 Some(fs::read(path).map_err(|e| format!("read identity: {e}"))?)
