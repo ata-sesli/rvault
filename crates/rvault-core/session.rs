@@ -3,15 +3,81 @@ use directories::ProjectDirs;
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use rand::rng;
-use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::time::SystemTime;
 
 const CURRENT_SESSION_FILE: &str = "current";
 const BROWSER_SESSION_FILE: &str = "browser-current";
+
+fn ensure_session_dir(session_dir: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(session_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(session_dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+fn open_private_new(path: &Path) -> Result<fs::File, std::io::Error> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+fn validate_session_token(token: &str) -> Result<(), String> {
+    if token.len() == 48 && token.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        Ok(())
+    } else {
+        Err("Invalid session token.".to_string())
+    }
+}
+
+fn start_session_at(session_dir: &Path, encryption_key: &[u8]) -> Result<String, std::io::Error> {
+    ensure_session_dir(session_dir)?;
+    loop {
+        let session_token: String = rng()
+            .sample_iter(&Alphanumeric)
+            .take(48)
+            .map(char::from)
+            .collect();
+        let session_file_path = session_dir.join(&session_token);
+        match open_private_new(&session_file_path) {
+            Ok(mut file) => {
+                file.write_all(encryption_key)?;
+                return Ok(session_token);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn write_session_pointer(session_dir: &Path, name: &str, token: &str) -> Result<(), String> {
+    validate_session_token(token)?;
+    ensure_session_dir(session_dir).map_err(|error| error.to_string())?;
+    let destination = session_dir.join(name);
+    let temporary = session_dir.join(format!(".{name}.{}.tmp", rand::random::<u64>()));
+    let result = (|| {
+        let mut file = open_private_new(&temporary).map_err(|error| error.to_string())?;
+        file.write_all(token.as_bytes())
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        fs::rename(&temporary, destination).map_err(|error| error.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
+}
 
 /// Returns the path to the secure directory used for session files.
 fn get_session_dir() -> Result<PathBuf, std::io::Error> {
@@ -22,7 +88,7 @@ fn get_session_dir() -> Result<PathBuf, std::io::Error> {
             .unwrap_or_else(|| proj_dirs.cache_dir());
         let session_dir = runtime_dir.join("sessions");
 
-        fs::create_dir_all(&session_dir)?;
+        ensure_session_dir(&session_dir)?;
         Ok(session_dir)
     } else {
         Err(std::io::Error::new(
@@ -37,28 +103,7 @@ fn get_session_dir() -> Result<PathBuf, std::io::Error> {
 pub fn start_session(encryption_key: &[u8]) -> Result<String, std::io::Error> {
     let _ = end_session();
     let session_dir = get_session_dir()?;
-    let session_token: String = rng()
-        .sample_iter(&Alphanumeric)
-        .take(48) // A long, random string for the token
-        .map(char::from)
-        .collect();
-
-    let session_file_path = session_dir.join(&session_token);
-
-    // Create the file and write the key to it.
-    let mut file = fs::File::create(&session_file_path)?;
-
-    // On Unix-like systems, set file permissions to be readable/writable only by the owner.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = file.metadata()?.permissions();
-        perms.set_mode(0o600); // Read/Write for owner, no access for others.
-        fs::set_permissions(&session_file_path, perms)?;
-    }
-
-    file.write_all(encryption_key)?;
-    Ok(session_token)
+    start_session_at(&session_dir, encryption_key)
 }
 
 /// Validates the current session token (from the env var) and returns the encryption key.
@@ -70,6 +115,7 @@ pub fn get_key_from_session() -> Result<Vec<u8>, String> {
     let session_timeout =
         Duration::from_secs(config.session_timeout.parse::<u64>().unwrap_or(15) * 60);
     let token = read_current()?;
+    validate_session_token(&token)?;
 
     let session_dir =
         get_session_dir().map_err(|e| format!("Error accessing session directory: {}", e))?;
@@ -109,6 +155,7 @@ pub fn get_key_from_session() -> Result<Vec<u8>, String> {
 pub fn end_session() -> Result<(), String> {
     let _ = end_browser_session();
     let token = read_current()?;
+    validate_session_token(&token)?;
     let session_dir =
         get_session_dir().map_err(|e| format!("Error accessing session directory: {}", e))?;
 
@@ -126,26 +173,24 @@ pub fn end_session() -> Result<(), String> {
     Ok(())
 }
 pub fn write_current(token: &str) -> Result<(), String> {
-    let p = get_session_dir()
-        .map_err(|e| e.to_string())?
-        .join(CURRENT_SESSION_FILE);
-    std::fs::write(p, token).map_err(|e| format!("Failed to write current token: {e}"))
+    let session_dir = get_session_dir().map_err(|error| error.to_string())?;
+    write_session_pointer(&session_dir, CURRENT_SESSION_FILE, token)
 }
 pub fn read_current() -> Result<String, String> {
     let p = get_session_dir()
         .map_err(|e| e.to_string())?
         .join(CURRENT_SESSION_FILE);
-    Ok(std::fs::read_to_string(p)
+    let token = std::fs::read_to_string(p)
         .map_err(|e| format!("No active session to lock: {e}"))?
         .trim()
-        .to_string())
+        .to_string();
+    validate_session_token(&token)?;
+    Ok(token)
 }
 
 pub fn start_browser_session(token: &str) -> Result<(), String> {
-    let p = get_session_dir()
-        .map_err(|e| e.to_string())?
-        .join(BROWSER_SESSION_FILE);
-    std::fs::write(p, token).map_err(|e| format!("Failed to write browser session token: {e}"))
+    let session_dir = get_session_dir().map_err(|error| error.to_string())?;
+    write_session_pointer(&session_dir, BROWSER_SESSION_FILE, token)
 }
 
 pub fn end_browser_session() -> Result<(), String> {
@@ -176,10 +221,12 @@ fn read_browser_current() -> Result<String, String> {
     let p = get_session_dir()
         .map_err(|e| e.to_string())?
         .join(BROWSER_SESSION_FILE);
-    Ok(std::fs::read_to_string(p)
+    let token = std::fs::read_to_string(p)
         .map_err(|e| format!("No active browser session: {e}"))?
         .trim()
-        .to_string())
+        .to_string();
+    validate_session_token(&token)?;
+    Ok(token)
 }
 
 fn browser_session_tokens_match(current_token: &str, browser_token: &str) -> bool {
@@ -189,6 +236,10 @@ fn browser_session_tokens_match(current_token: &str, browser_token: &str) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temporary_session_root() -> PathBuf {
+        std::env::temp_dir().join(format!("rvault-session-test-{}", rand::random::<u64>()))
+    }
 
     #[test]
     fn browser_session_requires_matching_current_token() {
@@ -201,5 +252,46 @@ mod tests {
             "other-token"
         ));
         assert!(!browser_session_tokens_match("current-token", ""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_root_and_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temporary_session_root();
+        let token = start_session_at(&root, &[9_u8; 32]).unwrap();
+        write_session_pointer(&root, CURRENT_SESSION_FILE, &token).unwrap();
+
+        assert_eq!(fs::metadata(&root).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(root.join(&token)).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(root.join(CURRENT_SESSION_FILE))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_session_tokens() {
+        let invalid = [
+            String::new(),
+            "../outside".to_string(),
+            "abc/def".to_string(),
+            "a".repeat(47),
+            "a".repeat(49),
+        ];
+        for token in invalid {
+            assert!(validate_session_token(&token).is_err());
+        }
+        assert!(validate_session_token(&"a".repeat(48)).is_ok());
     }
 }
