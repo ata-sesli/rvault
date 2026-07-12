@@ -1,32 +1,27 @@
-// --- RVAULT CORE LIBRARY ENTRY POINT ---
-// This file declares all the modules containing the shared security and data logic.
+//! Shared configuration, cryptography, storage, session, backup, and vault logic for RVault.
+//!
+//! The public APIs in [`crypto`], [`session`], and [`storage`] include legacy surfaces that remain
+//! stable for the rest of the 1.x release line. New applications should prefer result-returning
+//! operations where both legacy and fallible variants are available.
 
-// Configuration and Error Handling
 pub mod config;
 pub mod error;
 
 pub mod backup;
 pub mod binary;
 
-// Cryptography and Key Management
 pub mod crypto;
 pub mod identity;
 pub mod keystore;
-// If keystore_bin.rs doesn't exist, remove this line
-// and fix the imports in your other files.
 
-// Session, Data, and Vault Management
 pub mod portable_export;
 pub mod session;
 pub mod storage;
 pub mod vault;
 
-// Utilities
 pub mod clipboard;
-pub mod watcher; // Based on your file list, this seems to be included
-// If watcher.rs doesn't exist, remove this line.
+pub mod watcher;
 
-// Re-export common types for easier access in other crates (CLI/GUI)
 pub use error::{ConfigError, DatabaseError};
 pub use vault::VaultEntry;
 
