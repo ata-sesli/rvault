@@ -5,7 +5,7 @@ use rvault_core::{
         DerivedEncryptedData, EncryptedData, HashedData, decrypt_with_key, encrypt_data,
         encrypt_with_key, generate_password,
     },
-    session::{get_key_from_session, start_session},
+    session::{get_key_from_session, start_session, start_session_with_timeout},
     storage::{Database, Table},
     vault::Vault,
 };
@@ -20,6 +20,7 @@ fn legacy_signatures_remain_available_in_1x() {
     let _: fn(&[u8], &[u8]) -> Result<(String, String), String> = encrypt_with_key;
     let _: fn(&[u8], &str, &str) -> Result<String, String> = decrypt_with_key;
     let _: fn(&[u8]) -> Result<String, std::io::Error> = start_session;
+    let _: fn(&[u8], u64) -> Result<Option<String>, std::io::Error> = start_session_with_timeout;
     let _: fn() -> Result<Vec<u8>, String> = get_key_from_session;
     let _: fn() -> Result<(), String> = rvault_core::lock;
     let _: fn() -> Result<std::path::PathBuf, String> = rvault_core::backup::default_backup_dir;
