@@ -46,10 +46,8 @@ mod tests {
 
     #[test]
     fn snapshot_includes_committed_wal_rows() {
-        let root = std::env::temp_dir().join(format!(
-            "rvault-backup-test-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rvault-backup-test-{}", rand::random::<u64>()));
         fs::create_dir_all(&root).unwrap();
         let source_path = root.join("source.sqlite");
         let source = Connection::open(&source_path).unwrap();

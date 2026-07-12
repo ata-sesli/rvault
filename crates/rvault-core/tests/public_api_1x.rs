@@ -26,8 +26,7 @@ fn legacy_signatures_remain_available_in_1x() {
     let _: fn(&Table, &Database, String, String) = Table::add_entry;
     let _: fn(&Table, &Database, &[u8], String, String) = Table::add_entry_with_key;
     let _: fn(&Table, &Database, String, String) = Table::remove_entry;
-    let _: fn(&Table, &Database, String, String) -> Result<(), DatabaseError> =
-        Table::get_password;
+    let _: fn(&Table, &Database, String, String) -> Result<(), DatabaseError> = Table::get_password;
     let _: fn(&Table, &Database, &[u8], String, String) -> Result<(), DatabaseError> =
         Table::get_password_with_key;
 

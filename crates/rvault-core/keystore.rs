@@ -117,8 +117,16 @@ pub fn load_key_from_vault(master_password: &str, path: &Path) -> Result<[u8; EK
         .map_err(|_| "Failed to derive key.".to_string())?;
 
     // 3. Decrypt the MEK using the KEK.
-    let mek_json = Zeroizing::new(decrypt_with_key(kek.as_ref(), &encrypted_mek_b64, &nonce_b64)?);
-    let mek_bytes = Zeroizing::new(Base64.decode(mek_json.as_bytes()).map_err(|e| e.to_string())?);
+    let mek_json = Zeroizing::new(decrypt_with_key(
+        kek.as_ref(),
+        &encrypted_mek_b64,
+        &nonce_b64,
+    )?);
+    let mek_bytes = Zeroizing::new(
+        Base64
+            .decode(mek_json.as_bytes())
+            .map_err(|e| e.to_string())?,
+    );
 
     mek_bytes
         .as_slice()

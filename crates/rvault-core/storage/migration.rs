@@ -1,10 +1,7 @@
 use crate::error::DatabaseError;
 use rusqlite::{Connection, Transaction};
 
-pub(super) fn migrate(
-    connection: &Connection,
-    table_name: &str,
-) -> Result<(), DatabaseError> {
+pub(super) fn migrate(connection: &Connection, table_name: &str) -> Result<(), DatabaseError> {
     let transaction = connection.unchecked_transaction()?;
     let mut version: i64 =
         transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -28,32 +25,17 @@ pub(super) fn migrate(
 }
 
 fn migrate_0_to_1(transaction: &Transaction<'_>, table_name: &str) -> rusqlite::Result<()> {
-    add_column_if_missing(
-        transaction,
-        table_name,
-        "pinned",
-        "BOOLEAN DEFAULT FALSE",
-    )?;
+    add_column_if_missing(transaction, table_name, "pinned", "BOOLEAN DEFAULT FALSE")?;
     transaction.pragma_update(None, "user_version", 1)
 }
 
 fn migrate_1_to_2(transaction: &Transaction<'_>, table_name: &str) -> rusqlite::Result<()> {
-    add_column_if_missing(
-        transaction,
-        table_name,
-        "created_at",
-        "INTEGER DEFAULT 0",
-    )?;
+    add_column_if_missing(transaction, table_name, "created_at", "INTEGER DEFAULT 0")?;
     transaction.pragma_update(None, "user_version", 2)
 }
 
 fn migrate_2_to_3(transaction: &Transaction<'_>, table_name: &str) -> rusqlite::Result<()> {
-    add_column_if_missing(
-        transaction,
-        table_name,
-        "updated_at",
-        "INTEGER DEFAULT 0",
-    )?;
+    add_column_if_missing(transaction, table_name, "updated_at", "INTEGER DEFAULT 0")?;
     transaction.pragma_update(None, "user_version", 3)
 }
 

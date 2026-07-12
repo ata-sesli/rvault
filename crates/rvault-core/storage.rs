@@ -171,8 +171,8 @@ impl Table {
             .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
 
         // 3. Encrypt the data with the derived per-entry key.
-        let (ciphertext, nonce) =
-            encrypt_with_key(entry_key.as_ref(), password.as_bytes()).map_err(DatabaseError::Crypto)?;
+        let (ciphertext, nonce) = encrypt_with_key(entry_key.as_ref(), password.as_bytes())
+            .map_err(DatabaseError::Crypto)?;
 
         let now = Utc::now().timestamp();
 
@@ -308,8 +308,8 @@ impl Table {
             .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
 
         // 2. Encrypt the NEW password
-        let (ciphertext, nonce) =
-            encrypt_with_key(entry_key.as_ref(), new_password.as_bytes()).map_err(DatabaseError::Crypto)?;
+        let (ciphertext, nonce) = encrypt_with_key(entry_key.as_ref(), new_password.as_bytes())
+            .map_err(DatabaseError::Crypto)?;
         let now = Utc::now().timestamp();
 
         // 3. Update the entry
@@ -365,9 +365,9 @@ impl Table {
             "SELECT pinned FROM {} WHERE platform = ?1 AND user_id = ?2",
             &self.table_name
         );
-        let current_pinned: bool = db
-            .connection
-            .query_row(&query_check, [&platform, &user_id], |row| row.get(0))?;
+        let current_pinned: bool =
+            db.connection
+                .query_row(&query_check, [&platform, &user_id], |row| row.get(0))?;
 
         if !current_pinned {
             // Check cap

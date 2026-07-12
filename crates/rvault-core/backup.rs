@@ -68,9 +68,7 @@ pub fn create_backup_file(master_password: &str, out_path: &Path) -> Result<(), 
         config: fs::read(config_path().map_err(|e| e.to_string())?)
             .map_err(|e| format!("read config: {e}"))?,
         keystore: fs::read(keystore_path()?).map_err(|e| format!("read keystore: {e}"))?,
-        database: sqlite_snapshot::snapshot_database(
-            &database_path().map_err(|e| e.to_string())?,
-        )?,
+        database: sqlite_snapshot::snapshot_database(&database_path().map_err(|e| e.to_string())?)?,
         identity: match identity_path() {
             Ok(path) if path.exists() => {
                 Some(fs::read(path).map_err(|e| format!("read identity: {e}"))?)

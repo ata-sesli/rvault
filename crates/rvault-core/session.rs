@@ -263,9 +263,16 @@ mod tests {
         let token = start_session_at(&root, &[9_u8; 32]).unwrap();
         write_session_pointer(&root, CURRENT_SESSION_FILE, &token).unwrap();
 
-        assert_eq!(fs::metadata(&root).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(
-            fs::metadata(root.join(&token)).unwrap().permissions().mode() & 0o777,
+            fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(root.join(&token))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
             0o600
         );
         assert_eq!(
