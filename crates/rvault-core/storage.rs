@@ -10,6 +10,8 @@ use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
+mod migration;
+
 const CURRENT_DB_PATH: &str = "RVAULT_CURRENT_DB_PATH";
 const CURRENT_VAULT_NAME: &str = "RVAULT_CURRENT_VAULT_NAME";
 
@@ -62,45 +64,17 @@ impl Table {
                 nonce TEXT,
                 salt TEXT,
                 pinned BOOLEAN DEFAULT FALSE,
+                created_at INTEGER DEFAULT 0,
+                updated_at INTEGER DEFAULT 0,
                 UNIQUE(platform, user_id)
                 )",
             full_table_name
         );
-        match connection.execute(&query, []) {
-            Ok(_) => {
-                // Migration: Ensure pinned column exists for existing tables
-                let migration = format!(
-                    "ALTER TABLE {} ADD COLUMN pinned BOOLEAN DEFAULT FALSE",
-                    full_table_name
-                );
-                // We ignore the error if column already exists (simplest migration strategy for SQLite here)
-                let _ = connection.execute(&migration, []);
-
-                // Migration: Ensure created_at column exists
-                let migration2 = format!(
-                    "ALTER TABLE {} ADD COLUMN created_at INTEGER DEFAULT 0",
-                    full_table_name
-                );
-                let _ = connection.execute(&migration2, []);
-
-                // Migration: Ensure updated_at column exists
-                let migration3 = format!(
-                    "ALTER TABLE {} ADD COLUMN updated_at INTEGER DEFAULT 0",
-                    full_table_name
-                );
-                let _ = connection.execute(&migration3, []);
-
-                Ok(Self {
-                    table_name: full_table_name,
-                })
-            }
-            Err(e) => {
-                eprintln!("Update failed: {e}");
-                Err(DatabaseError::Sqlite(
-                    rusqlite::Error::InvalidParameterName(full_table_name),
-                ))
-            }
-        }
+        connection.execute(&query, [])?;
+        migration::migrate(connection, &full_table_name)?;
+        Ok(Self {
+            table_name: full_table_name,
+        })
     }
     pub fn add_entry(&self, db: &Database, platform: String, id_and_password: String) {
         let (user_id, password) = id_and_password.split_once(':').unwrap();
