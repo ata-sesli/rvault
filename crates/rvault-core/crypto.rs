@@ -10,6 +10,7 @@ use chacha20poly1305::{
 };
 use clap::ValueEnum;
 use rand::seq::{IndexedRandom, SliceRandom};
+use zeroize::Zeroizing;
 #[derive(Debug, Clone, ValueEnum)]
 // Multiple encryption methods in future implementations
 pub enum Encryption {
@@ -57,14 +58,14 @@ pub fn hash_data(data: &[u8]) -> Result<HashedData, argon2::password_hash::Error
 /// Unlike `hash_data`, this returns the raw output bytes suitable for encryption keys
 pub fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; 32], argon2::Error> {
     let argon2 = Argon2::default();
-    let mut output_key = [0u8; 32];
-    argon2.hash_password_into(password, salt, &mut output_key)?;
-    Ok(output_key)
+    let mut output_key = Zeroizing::new([0u8; 32]);
+    argon2.hash_password_into(password, salt, output_key.as_mut())?;
+    Ok(*output_key)
 }
 
 pub fn encrypt_data(data: &[u8]) -> Result<EncryptedData, chacha20poly1305::Error> {
-    let key = ChaCha20Poly1305::generate_key(&mut OsRng);
-    let cipher = ChaCha20Poly1305::new(&key);
+    let key = Zeroizing::new(<[u8; 32]>::from(ChaCha20Poly1305::generate_key(&mut OsRng)));
+    let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref()).expect("32-byte generated key");
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
     let ciphertext_bytes = cipher.encrypt(&nonce, data)?;
     let encrypted_data = EncryptedData {

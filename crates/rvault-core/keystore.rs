@@ -9,7 +9,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, path::Path};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const MAGIC: &str = "RVAULT";
 const AAD: &[u8] = b"rvault-keystore-v1";
@@ -67,14 +67,14 @@ pub fn create_key_vault(master_password: &str, path: &Path) -> Result<(), String
     let mut salt = [0u8; SALT_LEN];
     rand::rng().fill_bytes(&mut salt);
 
-    let mut kek = [0u8; EK_LEN];
+    let mut kek = Zeroizing::new([0u8; EK_LEN]);
     let argon2 = Argon2::default();
     let _ = argon2
-        .hash_password_into(master_password.as_bytes(), &salt, &mut kek)
+        .hash_password_into(master_password.as_bytes(), &salt, kek.as_mut())
         .map_err(|_| "Failed to derive key.".to_string())?;
 
     // 3. Encrypt the MEK using the KEK.
-    let (ciphertext_b64, nonce_b64) = encrypt_with_key(&kek, &mek.as_bytes())?;
+    let (ciphertext_b64, nonce_b64) = encrypt_with_key(kek.as_ref(), mek.as_bytes())?;
 
     // 4) Write raw: [salt][nonce][ct]
     let nonce = Base64.decode(&nonce_b64).map_err(|e| e.to_string())?;
@@ -110,17 +110,18 @@ pub fn load_key_from_vault(master_password: &str, path: &Path) -> Result<[u8; EK
     let encrypted_mek_b64 = Base64.encode(&file_bytes[SALT_LEN + NONCE_LEN..]);
 
     // 2. Re-derive the Key Encryption Key (KEK) from the password and salt.
-    let mut kek = [0u8; EK_LEN];
+    let mut kek = Zeroizing::new([0u8; EK_LEN]);
     let argon2 = Argon2::default();
     argon2
-        .hash_password_into(master_password.as_bytes(), salt, &mut kek)
+        .hash_password_into(master_password.as_bytes(), salt, kek.as_mut())
         .map_err(|_| "Failed to derive key.".to_string())?;
 
     // 3. Decrypt the MEK using the KEK.
-    let mek_json = decrypt_with_key(&kek, &encrypted_mek_b64, &nonce_b64)?;
-    let mek_bytes = Base64.decode(mek_json).map_err(|e| e.to_string())?;
+    let mek_json = Zeroizing::new(decrypt_with_key(kek.as_ref(), &encrypted_mek_b64, &nonce_b64)?);
+    let mek_bytes = Zeroizing::new(Base64.decode(mek_json.as_bytes()).map_err(|e| e.to_string())?);
 
     mek_bytes
+        .as_slice()
         .try_into()
         .map_err(|_| "Decrypted key has incorrect length.".to_string())
 }

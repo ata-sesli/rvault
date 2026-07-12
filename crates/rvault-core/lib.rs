@@ -15,6 +15,7 @@ pub mod identity;
 pub mod keystore;
 
 pub mod portable_export;
+pub mod secret;
 pub mod session;
 pub mod storage;
 pub mod vault;

@@ -9,6 +9,7 @@ use chrono::Utc;
 use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 mod migration;
 
@@ -164,14 +165,14 @@ impl Table {
         let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
 
         // 2. Derive a unique key for this entry from the main EK and the new salt.
-        let mut entry_key = [0u8; 32];
+        let mut entry_key = Zeroizing::new([0u8; 32]);
         Argon2::default()
-            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), &mut entry_key)
+            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), entry_key.as_mut())
             .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
 
         // 3. Encrypt the data with the derived per-entry key.
         let (ciphertext, nonce) =
-            encrypt_with_key(&entry_key, password.as_bytes()).map_err(DatabaseError::Crypto)?;
+            encrypt_with_key(entry_key.as_ref(), password.as_bytes()).map_err(DatabaseError::Crypto)?;
 
         let now = Utc::now().timestamp();
 
@@ -244,11 +245,11 @@ impl Table {
         entry: &crate::portable_export::ExportEntry,
     ) -> Result<(), DatabaseError> {
         let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-        let mut entry_key = [0u8; 32];
+        let mut entry_key = Zeroizing::new([0u8; 32]);
         Argon2::default()
-            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), &mut entry_key)
+            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), entry_key.as_mut())
             .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
-        let (ciphertext, nonce) = encrypt_with_key(&entry_key, entry.password.as_bytes())
+        let (ciphertext, nonce) = encrypt_with_key(entry_key.as_ref(), entry.password.as_bytes())
             .map_err(DatabaseError::Crypto)?;
         let now = Utc::now().timestamp();
         let created_at = if entry.created_at > 0 {
@@ -301,14 +302,14 @@ impl Table {
     ) -> Result<(), DatabaseError> {
         // 1. Generate new salt and key for the new data
         let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-        let mut entry_key = [0u8; 32];
+        let mut entry_key = Zeroizing::new([0u8; 32]);
         Argon2::default()
-            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), &mut entry_key)
+            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), entry_key.as_mut())
             .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
 
         // 2. Encrypt the NEW password
         let (ciphertext, nonce) =
-            encrypt_with_key(&entry_key, new_password.as_bytes()).map_err(DatabaseError::Crypto)?;
+            encrypt_with_key(entry_key.as_ref(), new_password.as_bytes()).map_err(DatabaseError::Crypto)?;
         let now = Utc::now().timestamp();
 
         // 3. Update the entry
@@ -424,13 +425,13 @@ impl Table {
             Ok((ciphertext, nonce, salt_str)) => {
                 // 1. Re-derive the exact same per-entry key using the fetched salt.
                 let salt = salt_str.as_bytes();
-                let mut entry_key = [0u8; 32];
+                let mut entry_key = Zeroizing::new([0u8; 32]);
                 Argon2::default()
-                    .hash_password_into(encryption_key, salt, &mut entry_key)
+                    .hash_password_into(encryption_key, salt, entry_key.as_mut())
                     .map_err(|error| DatabaseError::Crypto(error.to_string()))?;
 
                 // 2. Decrypt with the derived key.
-                match decrypt_with_key(&entry_key, &ciphertext, &nonce) {
+                match decrypt_with_key(entry_key.as_ref(), &ciphertext, &nonce) {
                     Ok(plaintext) => Ok(plaintext),
                     Err(e) => {
                         eprintln!("Decryption failed: {}", e);
