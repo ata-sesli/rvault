@@ -334,7 +334,7 @@ impl Table {
             &self.table_name
         );
 
-        db.connection.execute(
+        let affected = db.connection.execute(
             &query,
             params![
                 new_user_id,
@@ -346,6 +346,9 @@ impl Table {
                 old_user_id
             ],
         )?;
+        if affected != 1 {
+            return Err(DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
+        }
 
         Ok(())
     }
@@ -363,8 +366,7 @@ impl Table {
         );
         let current_pinned: bool = db
             .connection
-            .query_row(&query_check, [&platform, &user_id], |row| row.get(0))
-            .unwrap_or(false);
+            .query_row(&query_check, [&platform, &user_id], |row| row.get(0))?;
 
         if !current_pinned {
             // Check cap
@@ -385,8 +387,12 @@ impl Table {
             "UPDATE {} SET pinned = ?1 WHERE platform = ?2 AND user_id = ?3",
             &self.table_name
         );
-        db.connection
+        let affected = db
+            .connection
             .execute(&query_update, params![new_state, platform, user_id])?;
+        if affected != 1 {
+            return Err(DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
+        }
         Ok(new_state)
     }
 
@@ -568,5 +574,56 @@ mod tests {
             "alice@example.com".to_string(),
         );
         assert!(deleted.is_err());
+    }
+
+    fn assert_missing_row(error: DatabaseError) {
+        assert!(matches!(
+            error,
+            DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows)
+        ));
+    }
+
+    #[test]
+    fn missing_entry_toggle_pin_returns_no_rows() {
+        let db = memory_db();
+        let table = Table::new(&db, None).unwrap();
+        assert_missing_row(
+            table
+                .toggle_pin(&db, "missing".to_string(), "user".to_string())
+                .unwrap_err(),
+        );
+    }
+
+    #[test]
+    fn missing_entry_update_returns_no_rows() {
+        let db = memory_db();
+        let table = Table::new(&db, None).unwrap();
+        assert_missing_row(
+            table
+                .update_entry(&db, &[7_u8; 32], "missing", "user", "new-user", "secret")
+                .unwrap_err(),
+        );
+    }
+
+    #[test]
+    fn missing_entry_remove_returns_no_rows() {
+        let db = memory_db();
+        let table = Table::new(&db, None).unwrap();
+        assert_missing_row(
+            table
+                .remove_entry_result(&db, "missing".to_string(), "user".to_string())
+                .unwrap_err(),
+        );
+    }
+
+    #[test]
+    fn toggle_pin_propagates_query_failure() {
+        let db = memory_db();
+        let table = Table::new(&db, None).unwrap();
+        db.connection.execute("DROP TABLE main", []).unwrap();
+        assert!(matches!(
+            table.toggle_pin(&db, "missing".to_string(), "user".to_string()),
+            Err(DatabaseError::Sqlite(_))
+        ));
     }
 }
