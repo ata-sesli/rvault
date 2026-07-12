@@ -74,11 +74,20 @@ pub fn encrypt_data(data: &[u8]) -> Result<EncryptedData, chacha20poly1305::Erro
     };
     Ok(encrypted_data)
 }
+/// Generates a password containing each required character class.
+///
+/// For compatibility, this legacy API returns an empty string when `length` is smaller than the
+/// number of required character classes (three, or four when special characters are requested).
 pub fn generate_password(length: u8, special_characters: bool) -> String {
     let lowercase = b"abcdefghijklmnopqrstuvwxyz";
     let uppercase = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let numbers = b"0123456789";
     let symbols = b"!@#$%^&*()_+-=[]{}|;:'\",.<>/?";
+
+    let required_classes = if special_characters { 4 } else { 3 };
+    if length < required_classes {
+        return String::new();
+    }
 
     let mut rng = rand::rng();
     let mut password_chars = Vec::with_capacity(length as usize);
@@ -144,6 +153,9 @@ pub fn decrypt_with_key(
 ) -> Result<String, String> {
     let ciphertext = Base64.decode(ciphertext_b64).map_err(|e| e.to_string())?;
     let nonce_bytes = Base64.decode(nonce_b64).map_err(|e| e.to_string())?;
+    if nonce_bytes.len() != 12 {
+        return Err("invalid nonce length".to_string());
+    }
     let nonce = Nonce::from_slice(&nonce_bytes);
     let cipher = ChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
     let plaintext = cipher

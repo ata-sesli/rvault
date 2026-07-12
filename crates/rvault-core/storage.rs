@@ -447,7 +447,7 @@ impl Table {
                 let mut entry_key = [0u8; 32];
                 Argon2::default()
                     .hash_password_into(encryption_key, salt, &mut entry_key)
-                    .unwrap();
+                    .map_err(|error| DatabaseError::Crypto(error.to_string()))?;
 
                 // 2. Decrypt with the derived key.
                 match decrypt_with_key(&entry_key, &ciphertext, &nonce) {
