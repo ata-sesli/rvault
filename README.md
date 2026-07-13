@@ -2,7 +2,7 @@
 
 RVault is a local-first password manager written in Rust, with a terminal UI, a CLI, and a Helium browser extension that talks to the local `rvault` binary through native messaging.
 
-Current version: `1.2.0`.
+Current version: `1.4.0`.
 
 RVault keeps storage local. Passwords are encrypted before they are written to SQLite, browser integration goes through a local native host, and the extension does not store plaintext credentials.
 
@@ -330,7 +330,9 @@ Only the recipient identity can decrypt the export.
 Library users should prefer the typed `rvault-core` APIs: `SecretKey`, `Ciphertext`,
 `encrypt`/`decrypt`, `SessionKey::load`, and `EntryRepository`. The retained `Table` clipboard
 helpers and raw string crypto helpers are deprecated for the remainder of the 1.x line; existing
-callers can migrate without changing the SQLite or session formats.
+callers can migrate without changing the SQLite or session formats. See the
+[RVault Core 2.0 migration guide](docs/migration/rvault-core-2.0.md) for replacements and rollout
+order.
 
 RVault is split into three Rust crates and one browser extension:
 
