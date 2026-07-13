@@ -242,7 +242,7 @@ impl<'a> EntryRepository<'a> {
     }
 }
 
-fn derive_entry_key(key: &SecretKey, salt: &[u8]) -> Result<SecretKey, StorageError> {
+pub(super) fn derive_entry_key(key: &SecretKey, salt: &[u8]) -> Result<SecretKey, StorageError> {
     let mut bytes = Zeroizing::new([0_u8; 32]);
     Argon2::default()
         .hash_password_into(key.as_bytes(), salt, bytes.as_mut())
@@ -250,7 +250,10 @@ fn derive_entry_key(key: &SecretKey, salt: &[u8]) -> Result<SecretKey, StorageEr
     Ok(SecretKey::from_bytes(*bytes))
 }
 
-fn encrypt_entry(key: &SecretKey, secret: &[u8]) -> Result<(String, String, String), StorageError> {
+pub(super) fn encrypt_entry(
+    key: &SecretKey,
+    secret: &[u8],
+) -> Result<(String, String, String), StorageError> {
     let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     let entry_key = derive_entry_key(key, salt.as_ref().as_bytes())?;
     let ciphertext = encrypt(&entry_key, secret)?;
@@ -259,6 +262,21 @@ fn encrypt_entry(key: &SecretKey, secret: &[u8]) -> Result<(String, String, Stri
         BASE64.encode(ciphertext.nonce()),
         salt.to_string(),
     ))
+}
+
+pub(super) fn decrypt_entry(
+    key: &SecretKey,
+    ciphertext: &str,
+    nonce: &str,
+    salt: &str,
+) -> Result<SecretBytes, StorageError> {
+    let entry_key = derive_entry_key(key, salt.as_bytes())?;
+    let nonce = BASE64.decode(nonce).map_err(CryptoError::InvalidEncoding)?;
+    let bytes = BASE64
+        .decode(ciphertext)
+        .map_err(CryptoError::InvalidEncoding)?;
+    let ciphertext = Ciphertext::try_from_parts(&nonce, bytes)?;
+    decrypt(&entry_key, &ciphertext).map_err(Into::into)
 }
 
 fn exactly_one(affected: usize) -> Result<(), StorageError> {

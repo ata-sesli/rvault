@@ -14,7 +14,7 @@ use ratatui::{
         Paragraph, Row, Table, TableState, Tabs,
     },
 };
-use rvault_core::vault::VaultEntry;
+use rvault_core::storage::EntryMetadata;
 
 const PASSWORD_MASK_SYMBOL: &str = "•";
 
@@ -434,7 +434,7 @@ fn draw_setup(
 
 fn draw_main(
     f: &mut Frame,
-    items: &[VaultEntry],
+    items: &[EntryMetadata],
     list_state: &mut ListState,
     error: &Option<String>,
     theme: &Theme,
@@ -1330,13 +1330,10 @@ mod tests {
         assert!(!symbols.contains("***"));
     }
 
-    fn test_entry(platform: &str, user_id: &str) -> VaultEntry {
-        VaultEntry {
+    fn test_entry(platform: &str, user_id: &str) -> EntryMetadata {
+        EntryMetadata {
             platform: platform.to_string(),
             user_id: user_id.to_string(),
-            password: "password".to_string(),
-            salt: None,
-            nonce: None,
             pinned: false,
             id: None,
             created_at: 0,

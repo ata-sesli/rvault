@@ -1,11 +1,13 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as Base64};
 use rvault_core::{
-    backup,
+    SecretKey, backup,
     config::Config,
     crypto, identity,
     portable_export::{self, ExportEntry},
     session,
-    storage::{Database, Table},
+    storage::{
+        Database, EntryRepository, EntrySelector, EntryUpdate, NewEntry, StorageError, Table,
+    },
     vault::Vault,
 };
 use serde::{Deserialize, Serialize};
@@ -173,37 +175,41 @@ fn handle_request(request: HostRequest) -> Result<Value, String> {
             let _ = session::end_browser_session();
             Ok(json!({ "locked": true }))
         }
-        HostRequest::List { query, vault } => with_unlocked_table(vault, |db, table, _key| {
-            let normalized_query = query.unwrap_or_default().to_lowercase();
-            let entries = table
-                .list(db)
-                .map_err(|e| storage_error(e.to_string()))?
-                .into_iter()
-                .filter(|entry| {
-                    normalized_query.is_empty()
-                        || entry.platform.to_lowercase().contains(&normalized_query)
-                        || entry.user_id.to_lowercase().contains(&normalized_query)
-                })
-                .map(|entry| {
-                    json!({
-                        "platform": entry.platform,
-                        "userId": entry.user_id,
-                        "pinned": entry.pinned,
-                        "createdAt": entry.created_at,
-                        "updatedAt": entry.updated_at,
+        HostRequest::List { query, vault } => {
+            with_unlocked_repository(vault, |repository, _key| {
+                let normalized_query = query.unwrap_or_default().to_lowercase();
+                let entries = repository
+                    .list_metadata()
+                    .map_err(typed_storage_error)?
+                    .into_iter()
+                    .filter(|entry| {
+                        normalized_query.is_empty()
+                            || entry.platform.to_lowercase().contains(&normalized_query)
+                            || entry.user_id.to_lowercase().contains(&normalized_query)
                     })
-                })
-                .collect::<Vec<_>>();
-            Ok(json!({ "entries": entries }))
-        }),
+                    .map(|entry| {
+                        json!({
+                            "platform": entry.platform,
+                            "userId": entry.user_id,
+                            "pinned": entry.pinned,
+                            "createdAt": entry.created_at,
+                            "updatedAt": entry.updated_at,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!({ "entries": entries }))
+            })
+        }
         HostRequest::Get {
             platform,
             user_id,
             vault,
-        } => with_unlocked_table(vault, |db, table, key| {
-            let password = table
-                .retrieve_password_with_key(db, key, platform, user_id)
-                .map_err(|e| not_found_or_storage(e.to_string()))?;
+        } => with_unlocked_repository(vault, |repository, key| {
+            let entry = repository
+                .get(key, EntrySelector::new(&platform, &user_id))
+                .map_err(typed_storage_error)?;
+            let password = std::str::from_utf8(entry.secret.expose())
+                .map_err(|_| storage_error("Stored password is not valid text."))?;
             Ok(json!({ "password": password }))
         }),
         HostRequest::Create {
@@ -211,10 +217,10 @@ fn handle_request(request: HostRequest) -> Result<Value, String> {
             user_id,
             password,
             vault,
-        } => with_unlocked_table(vault, |db, table, key| {
-            table
-                .add_entry_with_key_result(db, key, platform, user_id, password)
-                .map_err(|e| storage_error(e.to_string()))?;
+        } => with_unlocked_repository(vault, |repository, key| {
+            repository
+                .add(key, NewEntry::new(&platform, &user_id, password.as_bytes()))
+                .map_err(typed_storage_error)?;
             Ok(json!({ "saved": true }))
         }),
         HostRequest::Update {
@@ -223,20 +229,24 @@ fn handle_request(request: HostRequest) -> Result<Value, String> {
             new_user_id,
             password,
             vault,
-        } => with_unlocked_table(vault, |db, table, key| {
-            table
-                .update_entry(db, key, &platform, &old_user_id, &new_user_id, &password)
-                .map_err(|e| storage_error(e.to_string()))?;
+        } => with_unlocked_repository(vault, |repository, key| {
+            repository
+                .update(
+                    key,
+                    EntrySelector::new(&platform, &old_user_id),
+                    EntryUpdate::new(&new_user_id, password.as_bytes()),
+                )
+                .map_err(typed_storage_error)?;
             Ok(json!({ "saved": true }))
         }),
         HostRequest::Delete {
             platform,
             user_id,
             vault,
-        } => with_unlocked_table(vault, |db, table, _key| {
-            table
-                .remove_entry_result(db, platform, user_id)
-                .map_err(|e| not_found_or_storage(e.to_string()))?;
+        } => with_unlocked_repository(vault, |repository, _key| {
+            repository
+                .remove(EntrySelector::new(&platform, &user_id))
+                .map_err(typed_storage_error)?;
             Ok(json!({ "deleted": true }))
         }),
         HostRequest::Generate {
@@ -246,7 +256,8 @@ fn handle_request(request: HostRequest) -> Result<Value, String> {
             let min_length = if special_characters { 4 } else { 3 };
             let length = length.clamp(min_length, 128);
             Ok(json!({
-                "password": crypto::generate_password(length, special_characters)
+                "password": crypto::try_generate_password(length, special_characters)
+                    .map_err(|_| error("invalid_request", "Invalid password length."))?
             }))
         }
         HostRequest::Identity => with_browser_key(|key| {
@@ -263,8 +274,8 @@ fn handle_request(request: HostRequest) -> Result<Value, String> {
             Ok(json!({ "restored": true }))
         }
         HostRequest::Export { to, entries, vault } => {
-            with_unlocked_table(vault, |db, table, key| {
-                let export_entries = build_export_entries(db, table, key, &entries)?;
+            with_unlocked_repository(vault, |repository, key| {
+                let export_entries = build_export_entries(repository, key, &entries)?;
                 let bytes = portable_export::create_export_bytes(&to, &export_entries)
                     .map_err(storage_error)?;
                 let token = write_transfer_file(&bytes)?;
@@ -375,6 +386,21 @@ where
     operation(&db, &table, &key)
 }
 
+fn with_unlocked_repository<F>(vault: Option<String>, operation: F) -> Result<Value, String>
+where
+    F: FnOnce(&EntryRepository<'_>, &SecretKey) -> Result<Value, String>,
+{
+    let key = session::get_key_from_browser_session().map_err(|e| error("locked", e))?;
+    let key: [u8; 32] = key
+        .try_into()
+        .map_err(|_| error("locked", "Invalid browser session key."))?;
+    let key = SecretKey::from_bytes(key);
+    let db = Database::new().map_err(|e| storage_error(e.to_string()))?;
+    let repository =
+        EntryRepository::new(&db, vault).map_err(|_| storage_error("Storage operation failed."))?;
+    operation(&repository, &key)
+}
+
 fn create_backup_transfer(master_password: String) -> Result<Value, String> {
     let config = Config::new().map_err(|e| storage_error(e.to_string()))?;
     let Some(stored_hash) = config.master_password_hash.as_deref() else {
@@ -397,36 +423,32 @@ fn create_backup_transfer(master_password: String) -> Result<Value, String> {
 }
 
 fn build_export_entries(
-    db: &Database,
-    table: &Table,
-    key: &[u8],
+    repository: &EntryRepository<'_>,
+    key: &SecretKey,
     selectors: &[HostEntrySelector],
 ) -> Result<Vec<ExportEntry>, String> {
     if selectors.is_empty() {
         return Err(error("invalid_request", "No entries were selected."));
     }
-    let metadata = table.list(db).map_err(|e| storage_error(e.to_string()))?;
     selectors
         .iter()
         .map(|selector| {
-            let password = table
-                .retrieve_password_with_key(
-                    db,
+            let entry = repository
+                .get(
                     key,
-                    selector.platform.clone(),
-                    selector.user_id.clone(),
+                    EntrySelector::new(&selector.platform, &selector.user_id),
                 )
-                .map_err(|e| not_found_or_storage(e.to_string()))?;
-            let meta = metadata.iter().find(|entry| {
-                entry.platform == selector.platform && entry.user_id == selector.user_id
-            });
+                .map_err(typed_storage_error)?;
+            let password = std::str::from_utf8(entry.secret.expose())
+                .map_err(|_| storage_error("Stored password is not valid text."))?
+                .to_string();
             Ok(ExportEntry {
                 platform: selector.platform.clone(),
                 user_id: selector.user_id.clone(),
                 password,
-                pinned: meta.map(|entry| entry.pinned).unwrap_or(false),
-                created_at: meta.map(|entry| entry.created_at).unwrap_or(0),
-                updated_at: meta.map(|entry| entry.updated_at).unwrap_or(0),
+                pinned: entry.metadata.pinned,
+                created_at: entry.metadata.created_at,
+                updated_at: entry.metadata.updated_at,
             })
         })
         .collect()
@@ -618,11 +640,15 @@ fn storage_error(message: impl Into<String>) -> String {
     error("storage_error", message)
 }
 
-fn not_found_or_storage(message: String) -> String {
-    if message.contains("Query returned no rows") || message.contains("QueryReturnedNoRows") {
-        error("not_found", "No matching entry found.")
-    } else {
-        storage_error(message)
+fn typed_storage_error(failure: StorageError) -> String {
+    match failure {
+        StorageError::NotFound => error("not_found", "No matching entry found."),
+        StorageError::Conflict => storage_error("An entry with that identity already exists."),
+        StorageError::Schema(_)
+        | StorageError::Database(_)
+        | StorageError::Io(_)
+        | StorageError::Crypto(_) => storage_error("Storage operation failed."),
+        _ => storage_error("Storage operation failed."),
     }
 }
 

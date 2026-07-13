@@ -6,9 +6,11 @@ use rvault_core::{
     backup, clipboard, config, crypto, identity,
     keystore::{self, keystore_path},
     portable_export,
-    session::{self, get_key_from_session},
-    storage::{Database, Table},
-    vault::{Vault, VaultEntry},
+    session::{self, SessionKey},
+    storage::{
+        Database, EntryMetadata, EntryRepository, EntrySelector, EntryUpdate, NewEntry, Table,
+    },
+    vault::Vault,
 };
 use std::io;
 use std::time::{Duration, Instant};
@@ -142,7 +144,7 @@ pub enum AppState {
 
 pub struct App {
     pub state: AppState,
-    pub items: Vec<VaultEntry>,
+    pub items: Vec<EntryMetadata>,
     pub list_state: ListState,
 
     // Generator state
@@ -241,7 +243,7 @@ impl App {
     }
 
     pub fn check_session(&mut self) -> bool {
-        match get_key_from_session() {
+        match SessionKey::load() {
             Ok(_) => {
                 self.state = AppState::MainTable;
                 self.refresh_vault_list();
@@ -253,8 +255,8 @@ impl App {
 
     pub fn refresh_vault_list(&mut self) {
         if let Ok(db) = Database::new() {
-            if let Ok(table) = Table::new(&db, None) {
-                if let Ok(entries) = table.list(&db) {
+            if let Ok(repository) = EntryRepository::new(&db, None) {
+                if let Ok(entries) = repository.list_metadata() {
                     self.items = entries;
                     self.sort_items();
                 }
@@ -381,9 +383,9 @@ impl App {
                             stage: AddEntryStage::Platform,
                         };
                     }
-                    KeyCode::Char('i') => match get_key_from_session()
+                    KeyCode::Char('i') => match SessionKey::load()
                         .map_err(|e| e.to_string())
-                        .and_then(|key| identity::load_or_create_identity(&key))
+                        .and_then(|key| identity::load_or_create_identity(key.as_bytes()))
                     {
                         Ok(id) => {
                             clipboard::copy_text(identity::public_code_from_key(&id.public_key));
@@ -460,11 +462,10 @@ impl App {
                         if let Some(i) = self.list_state.selected() {
                             if let Some(entry) = self.items.get(i) {
                                 if let Ok(db) = Database::new() {
-                                    if let Ok(table) = Table::new(&db, None) {
-                                        match table.toggle_pin(
-                                            &db,
-                                            entry.platform.clone(),
-                                            entry.user_id.clone(),
+                                    if let Ok(repository) = EntryRepository::new(&db, None) {
+                                        match repository.set_pinned(
+                                            EntrySelector::new(&entry.platform, &entry.user_id),
+                                            !entry.pinned,
                                         ) {
                                             Ok(_) => {
                                                 self.refresh_vault_list();
@@ -507,15 +508,17 @@ impl App {
                         if let Some(i) = self.list_state.selected() {
                             if let Some(entry) = self.items.get(i) {
                                 if let Ok(db) = Database::new() {
-                                    if let Ok(table) = Table::new(&db, None) {
-                                        if let Ok(ek) = get_key_from_session() {
-                                            if let Ok(plaintext) = table.retrieve_password_with_key(
-                                                &db,
+                                    if let Ok(repository) = EntryRepository::new(&db, None) {
+                                        if let Ok(ek) = SessionKey::load() {
+                                            if let Ok(entry) = repository.get(
                                                 &ek,
-                                                entry.platform.clone(),
-                                                entry.user_id.clone(),
+                                                EntrySelector::new(&entry.platform, &entry.user_id),
                                             ) {
-                                                clipboard::copy_text(plaintext);
+                                                if let Ok(plaintext) =
+                                                    std::str::from_utf8(entry.secret.expose())
+                                                {
+                                                    clipboard::copy_text(plaintext.to_string());
+                                                }
                                                 self.show_toast("Password has been copied!");
                                             }
                                         }
@@ -613,9 +616,12 @@ impl App {
                     }
                 }
                 KeyCode::Enter => {
-                    let pass = crypto::generate_password(self.gen_length, self.gen_special);
-                    clipboard::copy_text(pass);
-                    self.show_toast("Password has been copied!");
+                    if let Ok(pass) =
+                        crypto::try_generate_password(self.gen_length, self.gen_special)
+                    {
+                        clipboard::copy_text(pass);
+                        self.show_toast("Password has been copied!");
+                    }
                 }
                 _ => {}
             },
@@ -688,8 +694,8 @@ impl App {
             AppState::RemoveConfirmation { platform, user_id } => match key.code {
                 KeyCode::Char('y') | KeyCode::Enter => {
                     if let Ok(db) = Database::new() {
-                        if let Ok(table) = Table::new(&db, None) {
-                            table.remove_entry(&db, platform.clone(), user_id.clone());
+                        if let Ok(repository) = EntryRepository::new(&db, None) {
+                            let _ = repository.remove(EntrySelector::new(platform, user_id));
                         }
                     }
                     transition_to_main = true;
@@ -718,15 +724,15 @@ impl App {
                                 if !password.value.is_empty() {
                                     // Save updates
                                     if let Ok(db) = Database::new() {
-                                        if let Ok(table) = Table::new(&db, None) {
-                                            if let Ok(ek) = get_key_from_session() {
-                                                if let Err(e) = table.update_entry(
-                                                    &db,
+                                        if let Ok(repository) = EntryRepository::new(&db, None) {
+                                            if let Ok(ek) = SessionKey::load() {
+                                                if let Err(_e) = repository.update(
                                                     &ek,
-                                                    platform,
-                                                    original_user_id,
-                                                    &user_id.value,
-                                                    &password.value,
+                                                    EntrySelector::new(platform, original_user_id),
+                                                    EntryUpdate::new(
+                                                        &user_id.value,
+                                                        password.value.as_bytes(),
+                                                    ),
                                                 ) {
                                                     // Handle error? For now just print to stderr or set global error
                                                     // self.error = Some(...) // We don't have a global error field in AppState enum variants easily accessible without refactor.
@@ -803,15 +809,15 @@ impl App {
                                 if !password.value.is_empty() {
                                     // Save the entry
                                     if let Ok(db) = Database::new() {
-                                        if let Ok(table) = Table::new(&db, None) {
-                                            if let Ok(ek) = get_key_from_session() {
-                                                let id_pass =
-                                                    format!("{}:{}", user_id.value, password.value);
-                                                table.add_entry_with_key(
-                                                    &db,
+                                        if let Ok(repository) = EntryRepository::new(&db, None) {
+                                            if let Ok(ek) = SessionKey::load() {
+                                                let _ = repository.add(
                                                     &ek,
-                                                    platform.value.clone(),
-                                                    id_pass,
+                                                    NewEntry::new(
+                                                        &platform.value,
+                                                        &user_id.value,
+                                                        password.value.as_bytes(),
+                                                    ),
                                                 );
                                             }
                                         }
@@ -1102,23 +1108,21 @@ fn export_one_entry(
     path: &str,
 ) -> Result<(), String> {
     let db = Database::new().map_err(|e| e.to_string())?;
-    let table = Table::new(&db, None).map_err(|e| e.to_string())?;
-    let key = get_key_from_session()?;
-    let password = table
-        .retrieve_password_with_key(&db, &key, platform.to_string(), user_id.to_string())
+    let repository = EntryRepository::new(&db, None).map_err(|e| e.to_string())?;
+    let key = SessionKey::load().map_err(|e| e.to_string())?;
+    let decrypted = repository
+        .get(&key, EntrySelector::new(platform, user_id))
         .map_err(|e| e.to_string())?;
-    let meta = table
-        .list(&db)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|entry| entry.platform == platform && entry.user_id == user_id);
+    let password = std::str::from_utf8(decrypted.secret.expose())
+        .map_err(|error| error.to_string())?
+        .to_string();
     let entry = portable_export::ExportEntry {
         platform: platform.to_string(),
         user_id: user_id.to_string(),
         password,
-        pinned: meta.as_ref().map(|entry| entry.pinned).unwrap_or(false),
-        created_at: meta.as_ref().map(|entry| entry.created_at).unwrap_or(0),
-        updated_at: meta.as_ref().map(|entry| entry.updated_at).unwrap_or(0),
+        pinned: decrypted.metadata.pinned,
+        created_at: decrypted.metadata.created_at,
+        updated_at: decrypted.metadata.updated_at,
     };
     let bytes = portable_export::create_export_bytes(recipient, &[entry])?;
     std::fs::write(path, bytes).map_err(|e| format!("write export: {e}"))
@@ -1144,7 +1148,7 @@ fn import_export_file(
     let entries = decrypt_export_file(path)?;
     let db = Database::new().map_err(|e| e.to_string())?;
     let table = Table::new(&db, None).map_err(|e| e.to_string())?;
-    let key = get_key_from_session()?;
+    let key = SessionKey::load().map_err(|e| e.to_string())?;
     let mut imported = 0;
     let mut skipped = 0;
     for entry in entries {
@@ -1160,7 +1164,7 @@ fn import_export_file(
             continue;
         }
         table
-            .import_entry_with_key_result(&db, &key, &entry)
+            .import_entry_with_key_result(&db, key.as_bytes(), &entry)
             .map_err(|e| e.to_string())?;
         imported += 1;
     }
@@ -1168,8 +1172,8 @@ fn import_export_file(
 }
 
 fn decrypt_export_file(path: &str) -> Result<Vec<portable_export::ExportEntry>, String> {
-    let key = get_key_from_session()?;
-    let id = identity::load_or_create_identity(&key)?;
+    let key = SessionKey::load().map_err(|e| e.to_string())?;
+    let id = identity::load_or_create_identity(key.as_bytes())?;
     let bytes = std::fs::read(path).map_err(|e| format!("read export: {e}"))?;
     portable_export::decrypt_export_bytes(&id, &bytes)
 }

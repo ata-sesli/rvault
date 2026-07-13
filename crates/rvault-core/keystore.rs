@@ -1,4 +1,7 @@
-use crate::crypto::{decrypt_with_key, encrypt_with_key, generate_key};
+use crate::{
+    crypto::{Ciphertext, decrypt, encrypt, generate_key},
+    secret::SecretKey,
+};
 use argon2::Argon2;
 use argon2::{Algorithm, Params, Version};
 use base64::engine::general_purpose::STANDARD as Base64;
@@ -74,19 +77,14 @@ pub fn create_key_vault(master_password: &str, path: &Path) -> Result<(), String
         .map_err(|_| "Failed to derive key.".to_string())?;
 
     // 3. Encrypt the MEK using the KEK.
-    let (ciphertext_b64, nonce_b64) = encrypt_with_key(kek.as_ref(), mek.as_bytes())?;
+    let kek = SecretKey::from_bytes(*kek);
+    let ciphertext = encrypt(&kek, mek.as_bytes()).map_err(|error| error.to_string())?;
 
     // 4) Write raw: [salt][nonce][ct]
-    let nonce = Base64.decode(&nonce_b64).map_err(|e| e.to_string())?;
-    if nonce.len() != NONCE_LEN {
-        return Err("Unexpected nonce length".into());
-    }
-    let ct = Base64.decode(&ciphertext_b64).map_err(|e| e.to_string())?;
-
-    let mut out = Vec::with_capacity(SALT_LEN + NONCE_LEN + ct.len());
+    let mut out = Vec::with_capacity(SALT_LEN + NONCE_LEN + ciphertext.bytes().len());
     out.extend_from_slice(&salt);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&ct);
+    out.extend_from_slice(ciphertext.nonce());
+    out.extend_from_slice(ciphertext.bytes());
 
     // ensure parent exists (avoids ENOENT on first run)
     if let Some(parent) = path.parent() {
@@ -106,8 +104,8 @@ pub fn load_key_from_vault(master_password: &str, path: &Path) -> Result<[u8; EK
         return Err("Invalid or corrupt vault file.".to_string());
     }
     let salt = &file_bytes[0..SALT_LEN];
-    let nonce_b64 = Base64.encode(&file_bytes[SALT_LEN..SALT_LEN + NONCE_LEN]);
-    let encrypted_mek_b64 = Base64.encode(&file_bytes[SALT_LEN + NONCE_LEN..]);
+    let nonce = &file_bytes[SALT_LEN..SALT_LEN + NONCE_LEN];
+    let encrypted_mek = file_bytes[SALT_LEN + NONCE_LEN..].to_vec();
 
     // 2. Re-derive the Key Encryption Key (KEK) from the password and salt.
     let mut kek = Zeroizing::new([0u8; EK_LEN]);
@@ -117,14 +115,13 @@ pub fn load_key_from_vault(master_password: &str, path: &Path) -> Result<[u8; EK
         .map_err(|_| "Failed to derive key.".to_string())?;
 
     // 3. Decrypt the MEK using the KEK.
-    let mek_json = Zeroizing::new(decrypt_with_key(
-        kek.as_ref(),
-        &encrypted_mek_b64,
-        &nonce_b64,
-    )?);
+    let kek = SecretKey::from_bytes(*kek);
+    let ciphertext =
+        Ciphertext::try_from_parts(nonce, encrypted_mek).map_err(|error| error.to_string())?;
+    let mek_json = decrypt(&kek, &ciphertext).map_err(|error| error.to_string())?;
     let mek_bytes = Zeroizing::new(
         Base64
-            .decode(mek_json.as_bytes())
+            .decode(mek_json.expose())
             .map_err(|e| e.to_string())?,
     );
 

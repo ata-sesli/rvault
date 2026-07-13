@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use rvault_core::{
     ConfigError, DatabaseError, VaultEntry,
     config::Config,

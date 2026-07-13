@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use rvault_core::crypto::{decrypt_with_key, generate_password};
 
 fn assert_decrypt_error_without_panic(key: &[u8], ciphertext: &str, nonce: &str) {

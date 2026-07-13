@@ -27,6 +27,7 @@ pub enum Hash {
     Raw,
 }
 
+#[deprecated(note = "use Ciphertext with encrypt; encrypt_data exposes its generated key")]
 pub struct EncryptedData {
     pub key: String,
     pub nonce: String,
@@ -132,6 +133,8 @@ pub fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; 32], argon2::Erro
     Ok(*output_key)
 }
 
+#[deprecated(note = "use encrypt with an explicit SecretKey; this function returns its key")]
+#[allow(deprecated)]
 pub fn encrypt_data(data: &[u8]) -> Result<EncryptedData, chacha20poly1305::Error> {
     let key = Zeroizing::new(<[u8; 32]>::from(ChaCha20Poly1305::generate_key(&mut OsRng)));
     let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref()).expect("32-byte generated key");
@@ -184,6 +187,7 @@ pub fn generate_password(length: u8, special_characters: bool) -> String {
     password_chars.shuffle(&mut rng);
     password_chars.into_iter().collect::<String>()
 }
+#[deprecated(note = "use encrypt with SecretKey and Ciphertext")]
 pub fn encrypt_with_key(key: &[u8], data: &[u8]) -> Result<(String, String), String> {
     let cipher = ChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
     let nonce = ChaCha20Poly1305::generate_nonce(&mut chacha20poly1305::aead::OsRng);
@@ -216,6 +220,7 @@ pub fn decrypt_bytes_with_key(
         .map_err(|e| format!("decrypt failed: {e}"))
 }
 
+#[deprecated(note = "use decrypt with SecretKey and Ciphertext")]
 pub fn decrypt_with_key(
     key: &[u8],
     ciphertext_b64: &str,

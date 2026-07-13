@@ -1,15 +1,8 @@
-use crate::{
-    clipboard::copy_text,
-    crypto::{decrypt_with_key, encrypt_with_key},
-    error::DatabaseError,
-    vault::VaultEntry,
-};
-use argon2::{Argon2, password_hash::SaltString};
+use crate::{clipboard::copy_text, error::DatabaseError, secret::SecretKey, vault::VaultEntry};
 use chrono::Utc;
 use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
-use zeroize::Zeroizing;
 
 mod error;
 mod migration;
@@ -84,6 +77,9 @@ impl Table {
             table_name: full_table_name,
         })
     }
+    #[deprecated(
+        note = "no equally safe replacement exists; use EntryRepository::add with SecretKey"
+    )]
     pub fn add_entry(&self, db: &Database, platform: String, id_and_password: String) {
         let (user_id, password) = id_and_password.split_once(':').unwrap();
         let query = format!(
@@ -101,12 +97,11 @@ impl Table {
             ],
         );
     }
-    /// Add an entry encrypted with the provided master password.
-    /// Ciphertext is stored in the `password` column; nonce and salt are stored alongside.
-
+    #[deprecated(note = "use EntryRepository::remove")]
     pub fn remove_entry(&self, db: &Database, platform: String, user_id: String) {
         let _ = self.remove_entry_result(db, platform, user_id);
     }
+    #[deprecated(note = "use EntryRepository::get and copy only at the application boundary")]
     pub fn get_password(
         &self,
         db: &Database,
@@ -143,6 +138,7 @@ impl Table {
         }
     }
     /// Adds an entry using the main Encryption Key to derive a unique key for this entry.
+    #[deprecated(note = "use EntryRepository::add")]
     pub fn add_entry_with_key(
         &self,
         db: &Database,
@@ -168,18 +164,9 @@ impl Table {
         user_id: String,
         password: String,
     ) -> Result<(), DatabaseError> {
-        // 1. Generate a new, unique salt for this specific entry.
-        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-
-        // 2. Derive a unique key for this entry from the main EK and the new salt.
-        let mut entry_key = Zeroizing::new([0u8; 32]);
-        Argon2::default()
-            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), entry_key.as_mut())
-            .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
-
-        // 3. Encrypt the data with the derived per-entry key.
-        let (ciphertext, nonce) = encrypt_with_key(entry_key.as_ref(), password.as_bytes())
-            .map_err(DatabaseError::Crypto)?;
+        let key = secret_key_from_slice(encryption_key)?;
+        let (ciphertext, nonce, salt) =
+            repository::encrypt_entry(&key, password.as_bytes()).map_err(map_storage_error)?;
 
         let now = Utc::now().timestamp();
 
@@ -195,15 +182,7 @@ impl Table {
         );
         db.connection.execute(
             &query,
-            params![
-                platform,
-                user_id,
-                ciphertext,
-                nonce,
-                salt.to_string(),
-                now,
-                now
-            ],
+            params![platform, user_id, ciphertext, nonce, salt, now, now],
         )?;
         Ok(())
     }
@@ -251,13 +230,9 @@ impl Table {
         encryption_key: &[u8],
         entry: &crate::portable_export::ExportEntry,
     ) -> Result<(), DatabaseError> {
-        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-        let mut entry_key = Zeroizing::new([0u8; 32]);
-        Argon2::default()
-            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), entry_key.as_mut())
-            .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
-        let (ciphertext, nonce) = encrypt_with_key(entry_key.as_ref(), entry.password.as_bytes())
-            .map_err(DatabaseError::Crypto)?;
+        let key = secret_key_from_slice(encryption_key)?;
+        let (ciphertext, nonce, salt) = repository::encrypt_entry(&key, entry.password.as_bytes())
+            .map_err(map_storage_error)?;
         let now = Utc::now().timestamp();
         let created_at = if entry.created_at > 0 {
             entry.created_at
@@ -287,7 +262,7 @@ impl Table {
                 entry.user_id,
                 ciphertext,
                 nonce,
-                salt.to_string(),
+                salt,
                 entry.pinned,
                 created_at,
                 updated_at
@@ -307,16 +282,9 @@ impl Table {
         new_user_id: &str,
         new_password: &str,
     ) -> Result<(), DatabaseError> {
-        // 1. Generate new salt and key for the new data
-        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-        let mut entry_key = Zeroizing::new([0u8; 32]);
-        Argon2::default()
-            .hash_password_into(encryption_key, salt.as_ref().as_bytes(), entry_key.as_mut())
-            .map_err(|e| DatabaseError::Crypto(e.to_string()))?;
-
-        // 2. Encrypt the NEW password
-        let (ciphertext, nonce) = encrypt_with_key(entry_key.as_ref(), new_password.as_bytes())
-            .map_err(DatabaseError::Crypto)?;
+        let key = secret_key_from_slice(encryption_key)?;
+        let (ciphertext, nonce, salt) =
+            repository::encrypt_entry(&key, new_password.as_bytes()).map_err(map_storage_error)?;
         let now = Utc::now().timestamp();
 
         // 3. Update the entry
@@ -348,7 +316,7 @@ impl Table {
                 new_user_id,
                 ciphertext,
                 nonce,
-                salt.to_string(),
+                salt,
                 now,
                 platform,
                 old_user_id
@@ -430,21 +398,12 @@ impl Table {
 
         match row {
             Ok((ciphertext, nonce, salt_str)) => {
-                // 1. Re-derive the exact same per-entry key using the fetched salt.
-                let salt = salt_str.as_bytes();
-                let mut entry_key = Zeroizing::new([0u8; 32]);
-                Argon2::default()
-                    .hash_password_into(encryption_key, salt, entry_key.as_mut())
-                    .map_err(|error| DatabaseError::Crypto(error.to_string()))?;
-
-                // 2. Decrypt with the derived key.
-                match decrypt_with_key(entry_key.as_ref(), &ciphertext, &nonce) {
-                    Ok(plaintext) => Ok(plaintext),
-                    Err(e) => {
-                        eprintln!("Decryption failed: {}", e);
-                        Err(DatabaseError::from(rusqlite::Error::InvalidQuery))
-                    }
-                }
+                let key = secret_key_from_slice(encryption_key)?;
+                let plaintext = repository::decrypt_entry(&key, &ciphertext, &nonce, &salt_str)
+                    .map_err(map_storage_error)?;
+                std::str::from_utf8(plaintext.expose())
+                    .map(str::to_owned)
+                    .map_err(|error| DatabaseError::Crypto(error.to_string()))
             }
             Err(e) => {
                 eprintln!("Database query failed: {}", e);
@@ -455,6 +414,7 @@ impl Table {
 
     /// Retrieves an entry by re-deriving its unique key from the main Encryption Key and the entry's salt.
     /// Copies the password to clipboard and prints success message.
+    #[deprecated(note = "use EntryRepository::get and copy only at the application boundary")]
     pub fn get_password_with_key(
         &self,
         db: &Database,
@@ -498,6 +458,26 @@ impl Table {
     }
     fn is_valid_identifier(name: &str) -> bool {
         !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+}
+
+fn secret_key_from_slice(key: &[u8]) -> Result<SecretKey, DatabaseError> {
+    let bytes: [u8; 32] = key
+        .try_into()
+        .map_err(|_| DatabaseError::Crypto("invalid key length".to_string()))?;
+    Ok(SecretKey::from_bytes(bytes))
+}
+
+fn map_storage_error(error: StorageError) -> DatabaseError {
+    match error {
+        StorageError::NotFound => DatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows),
+        StorageError::Conflict => DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(19),
+            Some("entry conflict".to_string()),
+        )),
+        StorageError::Schema(error) | StorageError::Database(error) => DatabaseError::Sqlite(error),
+        StorageError::Io(error) => DatabaseError::Io(error),
+        StorageError::Crypto(error) => DatabaseError::Crypto(error.to_string()),
     }
 }
 

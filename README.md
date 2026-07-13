@@ -325,6 +325,13 @@ Only the recipient identity can decrypt the export.
 
 ## How RVault Works
 
+### Rust API guidance
+
+Library users should prefer the typed `rvault-core` APIs: `SecretKey`, `Ciphertext`,
+`encrypt`/`decrypt`, `SessionKey::load`, and `EntryRepository`. The retained `Table` clipboard
+helpers and raw string crypto helpers are deprecated for the remainder of the 1.x line; existing
+callers can migrate without changing the SQLite or session formats.
+
 RVault is split into three Rust crates and one browser extension:
 
 - `rvault-core` handles config, keystore management, encryption, sessions, binary envelopes, backup, identity, export/import, storage, and clipboard integration.

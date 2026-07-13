@@ -14,8 +14,10 @@ use std::{
 // Import everything needed from the new library
 use rvault_core::keystore::keystore_path;
 use rvault_core::{
-    backup, clipboard, config, crypto, identity, keystore, portable_export, session, storage,
-    storage::Table, vault,
+    SecretKey, SessionKey, backup, clipboard, config, crypto, identity, keystore, portable_export,
+    session, storage,
+    storage::{EntryRepository, EntrySelector, NewEntry, Table},
+    vault,
 }; // Special case import for path
 
 fn main() {
@@ -87,9 +89,13 @@ fn main() {
             length,
             special_characters,
         } => {
-            let final_password = crypto::generate_password(*length, *special_characters);
-            clipboard::copy_text(final_password);
-            println!("Generated password has been copied! You can use it now.");
+            match crypto::try_generate_password(*length, *special_characters) {
+                Ok(final_password) => {
+                    clipboard::copy_text(final_password);
+                    println!("Generated password has been copied! You can use it now.");
+                }
+                Err(error) => eprintln!("Error: {error}"),
+            }
             return;
         }
         Commands::Unlock {} => {
@@ -134,7 +140,7 @@ fn main() {
     // If the command was not handled above, it's a protected command.
     // We must have a valid session key to continue.
     let ek = if is_protected_command {
-        match session::get_key_from_session() {
+        match SessionKey::load() {
             Ok(key) => key, // The key is valid, proceed.
             Err(e) => {
                 eprintln!("❌ Error: {}", e);
@@ -153,7 +159,7 @@ fn main() {
     match command {
         Commands::Create { vault_name } => {
             let db = storage::Database::new().unwrap();
-            let _ = Table::new(&db, vault_name).unwrap();
+            let _ = EntryRepository::new(&db, vault_name).unwrap();
             println!("Storage created successfully!");
         }
         Commands::Add {
@@ -162,14 +168,19 @@ fn main() {
             id_and_password,
         } => {
             let db = storage::Database::new().unwrap();
-            if let Ok(table) = Table::new(&db, vault) {
-                let (user_id, _) = id_and_password.split_once(':').unwrap();
+            if let Ok(repository) = EntryRepository::new(&db, vault) {
+                let Some((user_id, password)) = id_and_password.split_once(':') else {
+                    eprintln!("Error: entry must use USER_ID:PASSWORD format");
+                    return;
+                };
                 let user_id_owned = user_id.to_string();
-                table.add_entry_with_key(&db, &ek, platform.clone(), id_and_password);
-                println!(
-                    "Account {} in {} has been added successfully!",
-                    user_id_owned, platform
-                );
+                match repository.add(&ek, NewEntry::new(&platform, user_id, password.as_bytes())) {
+                    Ok(()) => println!(
+                        "Account {} in {} has been added successfully!",
+                        user_id_owned, platform
+                    ),
+                    Err(error) => eprintln!("Error: {error}"),
+                }
             }
         }
         Commands::Remove {
@@ -178,12 +189,14 @@ fn main() {
             id,
         } => {
             let db = storage::Database::new().unwrap();
-            if let Ok(table) = Table::new(&db, vault) {
-                table.remove_entry(&db, platform.clone(), id.clone());
-                println!(
-                    "Account {} in {} has been removed successfully!",
-                    id, platform
-                );
+            if let Ok(repository) = EntryRepository::new(&db, vault) {
+                match repository.remove(EntrySelector::new(&platform, &id)) {
+                    Ok(()) => println!(
+                        "Account {} in {} has been removed successfully!",
+                        id, platform
+                    ),
+                    Err(error) => eprintln!("Error: {error}"),
+                }
             }
         }
         Commands::Get {
@@ -192,14 +205,20 @@ fn main() {
             id,
         } => {
             let db = storage::Database::new().unwrap();
-            if let Ok(table) = Table::new(&db, vault) {
-                match table.get_password_with_key(&db, &ek, platform, id) {
-                    Ok(_) => println!("Password has been copied! You can use it now."),
+            if let Ok(repository) = EntryRepository::new(&db, vault) {
+                match repository.get(&ek, EntrySelector::new(&platform, &id)) {
+                    Ok(entry) => match std::str::from_utf8(entry.secret.expose()) {
+                        Ok(password) => {
+                            clipboard::copy_text(password.to_string());
+                            println!("Password has been copied! You can use it now.");
+                        }
+                        Err(error) => eprintln!("Error: {error}"),
+                    },
                     Err(e) => eprintln!("Error: {}", e),
                 }
             }
         }
-        Commands::Identity {} => match identity::load_or_create_identity(&ek) {
+        Commands::Identity {} => match identity::load_or_create_identity(ek.as_bytes()) {
             Ok(identity) => println!("{}", identity::public_code_from_key(&identity.public_key)),
             Err(e) => eprintln!("Error: {e}"),
         },
@@ -212,8 +231,8 @@ fn main() {
         } => match collect_export_selectors(entry, selected) {
             Ok(selectors) => {
                 let db = storage::Database::new().unwrap();
-                match Table::new(&db, vault) {
-                    Ok(table) => match build_export_entries(&db, &table, &ek, &selectors) {
+                match EntryRepository::new(&db, vault) {
+                    Ok(repository) => match build_export_entries(&repository, &ek, &selectors) {
                         Ok(entries) => match portable_export::create_export_bytes(&to, &entries) {
                             Ok(bytes) => match fs::write(&out, bytes) {
                                 Ok(_) => println!("Encrypted export written to {out}"),
@@ -328,28 +347,26 @@ fn collect_export_selectors(
 }
 
 fn build_export_entries(
-    db: &storage::Database,
-    table: &Table,
-    encryption_key: &[u8],
+    repository: &EntryRepository<'_>,
+    encryption_key: &SecretKey,
     selectors: &[(String, String)],
 ) -> Result<Vec<portable_export::ExportEntry>, String> {
-    let metadata = table.list(db).map_err(|e| e.to_string())?;
     selectors
         .iter()
         .map(|(platform, user_id)| {
-            let password = table
-                .retrieve_password_with_key(db, encryption_key, platform.clone(), user_id.clone())
+            let entry = repository
+                .get(encryption_key, EntrySelector::new(platform, user_id))
                 .map_err(|e| e.to_string())?;
-            let meta = metadata
-                .iter()
-                .find(|entry| entry.platform == *platform && entry.user_id == *user_id);
+            let password = std::str::from_utf8(entry.secret.expose())
+                .map_err(|error| error.to_string())?
+                .to_string();
             Ok(portable_export::ExportEntry {
                 platform: platform.clone(),
                 user_id: user_id.clone(),
                 password,
-                pinned: meta.map(|entry| entry.pinned).unwrap_or(false),
-                created_at: meta.map(|entry| entry.created_at).unwrap_or(0),
-                updated_at: meta.map(|entry| entry.updated_at).unwrap_or(0),
+                pinned: entry.metadata.pinned,
+                created_at: entry.metadata.created_at,
+                updated_at: entry.metadata.updated_at,
             })
         })
         .collect()
@@ -358,12 +375,12 @@ fn build_export_entries(
 fn import_entries_from_file(
     db: &storage::Database,
     table: &Table,
-    encryption_key: &[u8],
+    encryption_key: &SecretKey,
     path: &str,
     overwrite_all: bool,
     skip_all: bool,
 ) -> Result<(usize, usize), String> {
-    let identity = identity::load_or_create_identity(encryption_key)?;
+    let identity = identity::load_or_create_identity(encryption_key.as_bytes())?;
     let bytes = fs::read(path).map_err(|e| format!("read export: {e}"))?;
     let entries = portable_export::decrypt_export_bytes(&identity, &bytes)?;
     let mut imported = 0;
@@ -391,7 +408,7 @@ fn import_entries_from_file(
 
         if should_import {
             table
-                .import_entry_with_key_result(db, encryption_key, &entry)
+                .import_entry_with_key_result(db, encryption_key.as_bytes(), &entry)
                 .map_err(|e| e.to_string())?;
             imported += 1;
         } else {

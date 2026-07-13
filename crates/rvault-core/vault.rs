@@ -45,6 +45,8 @@ impl Vault {
     fn load_external_vault(vault: Vec<u8>) {}
     fn encrypt_vault() {}
     fn encrypt_partial_vault() {}
+    #[deprecated(note = "no replacement exists; use portable_export with explicit entries")]
     pub fn export_vault() {}
+    #[deprecated(note = "no replacement exists; use portable_export with explicit entries")]
     pub fn export_partial_vault() {}
 }
