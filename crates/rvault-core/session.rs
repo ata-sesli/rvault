@@ -239,9 +239,22 @@ pub fn start_session_with_timeout(
 
 /// Validates the current session token (from the env var) and returns the encryption key.
 pub fn get_key_from_session() -> Result<Vec<u8>, String> {
-    SessionKey::load()
-        .map(|key| key.as_bytes().to_vec())
-        .map_err(|error| legacy_session_error(&error))
+    let token = read_current()?;
+    let session_dir =
+        get_session_dir().map_err(|error| format!("Error accessing session directory: {error}"))?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "System clock error.".to_string())?
+        .as_secs();
+    let legacy_timeout = match session_expiration_path(&session_dir, &token).try_exists() {
+        Ok(true) | Err(_) => 0,
+        Ok(false) => {
+            let config =
+                Config::new().map_err(|error| format!("Failed to load config: {error}"))?;
+            config.session_timeout.parse::<u64>().unwrap_or(15) * 60
+        }
+    };
+    get_key_from_session_at(&session_dir, &token, now, legacy_timeout)
 }
 
 fn legacy_session_error(error: &SessionError) -> String {
@@ -335,6 +348,15 @@ fn read_current_typed_at(session_dir: &Path) -> Result<String, SessionError> {
     Ok(token)
 }
 
+fn read_current_legacy_at(session_dir: &Path) -> Result<String, String> {
+    let token = fs::read_to_string(session_dir.join(CURRENT_SESSION_FILE))
+        .map_err(|error| format!("No active session to lock: {error}"))?
+        .trim()
+        .to_string();
+    validate_session_token(&token)?;
+    Ok(token)
+}
+
 #[cfg(test)]
 fn load_key_from_pointer_at(
     session_dir: &Path,
@@ -345,7 +367,6 @@ fn load_key_from_pointer_at(
     load_key_at(session_dir, &token, now, legacy_timeout_seconds)
 }
 
-#[cfg(test)]
 fn get_key_from_session_at(
     session_dir: &Path,
     token: &str,
@@ -363,9 +384,8 @@ fn get_key_from_session_root_at(
     now: u64,
     legacy_timeout_seconds: u64,
 ) -> Result<Vec<u8>, String> {
-    load_key_from_pointer_at(session_dir, now, legacy_timeout_seconds)
-        .map(|key| key.as_bytes().to_vec())
-        .map_err(|error| legacy_session_error(&error))
+    let token = read_current_legacy_at(session_dir)?;
+    get_key_from_session_at(session_dir, &token, now, legacy_timeout_seconds)
 }
 
 fn cleanup_session_files(session_dir: &Path, token: &str) -> Result<(), String> {
@@ -415,15 +435,8 @@ pub fn write_current(token: &str) -> Result<(), String> {
     write_session_pointer(&session_dir, CURRENT_SESSION_FILE, token)
 }
 pub fn read_current() -> Result<String, String> {
-    let p = get_session_dir()
-        .map_err(|e| e.to_string())?
-        .join(CURRENT_SESSION_FILE);
-    let token = std::fs::read_to_string(p)
-        .map_err(|e| format!("No active session to lock: {e}"))?
-        .trim()
-        .to_string();
-    validate_session_token(&token)?;
-    Ok(token)
+    let session_dir = get_session_dir().map_err(|error| error.to_string())?;
+    read_current_legacy_at(&session_dir)
 }
 
 pub fn start_browser_session(token: &str) -> Result<(), String> {
@@ -681,15 +694,25 @@ mod tests {
     fn legacy_adapter_preserves_pointer_error_messages() {
         let root = temporary_session_root();
         fs::create_dir_all(&root).unwrap();
+        let missing = fs::read_to_string(root.join(CURRENT_SESSION_FILE)).unwrap_err();
         assert_eq!(
             get_key_from_session_root_at(&root, 1_000, 900).unwrap_err(),
-            "Vault is locked. Invalid or expired session."
+            format!("No active session to lock: {missing}")
         );
 
         fs::write(root.join(CURRENT_SESSION_FILE), "malformed").unwrap();
         assert_eq!(
             get_key_from_session_root_at(&root, 1_000, 900).unwrap_err(),
             "Invalid session token."
+        );
+
+        fs::remove_file(root.join(CURRENT_SESSION_FILE)).unwrap();
+        fs::create_dir(root.join(CURRENT_SESSION_FILE)).unwrap();
+        let unreadable = fs::read_to_string(root.join(CURRENT_SESSION_FILE)).unwrap_err();
+        assert_ne!(unreadable.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(
+            get_key_from_session_root_at(&root, 1_000, 900).unwrap_err(),
+            format!("No active session to lock: {unreadable}")
         );
 
         fs::remove_dir_all(root).unwrap();

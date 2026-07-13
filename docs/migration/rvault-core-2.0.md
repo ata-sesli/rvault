@@ -88,11 +88,135 @@ repo.remove(rvault_core::EntrySelector::new("example.com", "me"))?;
 The `*_result` compatibility names are also removed. Use the corresponding repository operation:
 `add`, `update`, `remove`, `get`, `list_metadata`, or `set_pinned`.
 
+### `Table::remove_entry_result`
+
+```rust
+// 1.x
+table.remove_entry_result(&db, "example.com".into(), "me".into())?;
+
+// 2.0
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+repo.remove(rvault_core::EntrySelector::new("example.com", "me"))?;
+```
+
+The new operation returns `StorageError::NotFound` for a missing identity instead of wrapping
+`rusqlite::Error::QueryReturnedNoRows` in `DatabaseError`.
+
+### `Table::import_entry_with_key_result`
+
+There is no typed public import operation in 1.4 that preserves imported timestamps and pin state.
+During the 1.4 migration, isolate the deprecated call at the import boundary rather than replacing
+it with ordinary `add`/`update` calls that would silently change metadata behavior:
+
+```rust
+// 1.x: called throughout import orchestration.
+table.import_entry_with_key_result(&db, &key_bytes, &export_entry)?;
+
+// 1.4 preparation: one temporary, explicit compatibility boundary.
+#[allow(deprecated)]
+fn import_preserving_metadata(
+    table: &rvault_core::storage::Table,
+    db: &rvault_core::storage::Database,
+    key: &[u8],
+    entry: &rvault_core::portable_export::ExportEntry,
+) -> Result<(), rvault_core::DatabaseError> {
+    table.import_entry_with_key_result(db, key, entry)
+}
+```
+
+The 2.0 import boundary must replace this isolated adapter before removal. This guide does not claim
+that such a typed replacement exists in 1.4.
+
+### `Table::entry_exists`
+
+```rust
+// 1.x
+let exists = table.entry_exists(&db, "example.com", "me")?;
+
+// 2.0: make the application-level decision from non-secret metadata.
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+let exists = repo
+    .list_metadata()?
+    .iter()
+    .any(|entry| entry.platform == "example.com" && entry.user_id == "me");
+```
+
+### `Table::update_entry`
+
+```rust
+// 1.x
+table.update_entry(
+    &db,
+    &key_bytes,
+    "example.com",
+    "old-user",
+    "new-user",
+    "new-password",
+)?;
+
+// 2.0
+let key = rvault_core::SecretKey::from_bytes(key_bytes);
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+repo.update(
+    &key,
+    rvault_core::EntrySelector::new("example.com", "old-user"),
+    rvault_core::EntryUpdate::new("new-user", b"new-password"),
+)?;
+```
+
+### `Table::toggle_pin`
+
+```rust
+// 1.x: toggled implicitly and returned the new state.
+let pinned = table.toggle_pin(&db, "example.com".into(), "me".into())?;
+
+// 2.0: the application chooses the explicit target state.
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+let current = repo
+    .list_metadata()?
+    .into_iter()
+    .find(|entry| entry.platform == "example.com" && entry.user_id == "me")
+    .ok_or(rvault_core::StorageError::NotFound)?;
+let pinned = !current.pinned;
+repo.set_pinned(rvault_core::EntrySelector::new("example.com", "me"), pinned)?;
+```
+
+### `Table::retrieve_password_with_key`
+
+```rust
+// 1.x: returned an ordinary String.
+let password = table.retrieve_password_with_key(
+    &db,
+    &key_bytes,
+    "example.com".into(),
+    "me".into(),
+)?;
+
+// 2.0: decrypted bytes remain in zeroizing ownership.
+let key = rvault_core::SecretKey::from_bytes(key_bytes);
+let entry = rvault_core::EntryRepository::new(&db, None)?.get(
+    &key,
+    rvault_core::EntrySelector::new("example.com", "me"),
+)?;
+consume(entry.secret.expose());
+```
+
+### `Table::list`
+
+```rust
+// 1.x: exposed VaultEntry values containing persisted secret fields.
+let entries: Vec<rvault_core::VaultEntry> = table.list(&db)?;
+
+// 2.0: list views receive metadata only.
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+let entries: Vec<rvault_core::EntryMetadata> = repo.list_metadata()?;
+```
+
 ### `Table::get_password` and `Table::get_password_with_key`
 
 ```rust
 // 1.x: core decrypted and copied to the clipboard.
-table.get_password_with_key(&db, key_bytes, "example.com".into(), "me".into())?;
+table.get_password_with_key(&db, &key_bytes, "example.com".into(), "me".into())?;
 
 // 2.0: core returns zeroizing bytes; the application chooses their destination.
 let key = rvault_core::SecretKey::from_bytes(key_bytes);
