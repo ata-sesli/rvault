@@ -16,7 +16,10 @@ These items remain unchecked until their 2.0 implementation and verification lan
 - [ ] Remove plaintext `Table::add_entry`; callers supply a `SecretKey` to `EntryRepository::add`.
 - [ ] Remove error-swallowing `Table::add_entry_with_key` and `Table::remove_entry` wrappers.
 - [ ] Remove clipboard-coupled `Table::get_password` and `Table::get_password_with_key`.
-- [ ] Remove result-suffix compatibility methods after repository migration.
+- [ ] Remove result-suffix compatibility methods after equivalent repository operations land,
+      excluding `import_entry_with_key_result` until its separate replacement gate is satisfied.
+- [ ] Remove `import_entry_with_key_result` only after a tested typed import boundary preserves
+      timestamps, pin state, and upsert behavior.
 - [ ] Replace `VaultEntry` with purpose-specific entry types.
 - [ ] Remove placeholder `Vault` fields and no-op export/encryption methods.
 - [ ] Remove unused `EncryptedData`, `DerivedEncryptedData`, `HashedData`, `Encryption`, and `Hash` types.

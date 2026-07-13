@@ -85,8 +85,10 @@ let repo = rvault_core::EntryRepository::new(&db, None)?;
 repo.remove(rvault_core::EntrySelector::new("example.com", "me"))?;
 ```
 
-The `*_result` compatibility names are also removed. Use the corresponding repository operation:
-`add`, `update`, `remove`, `get`, `list_metadata`, or `set_pinned`.
+The `*_result` compatibility names are removed only after their corresponding repository operation
+lands. Use `add`, `update`, `remove`, `get`, `list_metadata`, or `set_pinned` where those operations
+preserve the old contract. This generic removal rule explicitly excludes
+`import_entry_with_key_result` until its separate replacement gate below is satisfied.
 
 ### `Table::remove_entry_result`
 
@@ -124,8 +126,11 @@ fn import_preserving_metadata(
 }
 ```
 
-The 2.0 import boundary must replace this isolated adapter before removal. This guide does not claim
-that such a typed replacement exists in 1.4.
+No typed metadata-preserving import API exists in 1.4. Therefore,
+`import_entry_with_key_result` **must not be removed in 2.0** until a tested typed import boundary
+preserves its timestamps, pin state, and upsert behavior. This is a release gate, not a design for
+that future API. The generic result-suffix removal item does not include this helper until the gate
+is satisfied.
 
 ### `Table::entry_exists`
 
@@ -215,17 +220,38 @@ let entries: Vec<rvault_core::EntryMetadata> = repo.list_metadata()?;
 ### `Table::get_password` and `Table::get_password_with_key`
 
 ```rust
-// 1.x: core decrypted and copied to the clipboard.
+// 1.x plaintext-row path: read a plaintext password and copy it to the clipboard.
+table.get_password(&db, "example.com".into(), "me".into())?;
+
+// 1.x encrypted-row path: decrypt and copy to the clipboard.
 table.get_password_with_key(&db, &key_bytes, "example.com".into(), "me".into())?;
 
-// 2.0: core returns zeroizing bytes; the application chooses their destination.
+// 2.0: first migrate the plaintext row into encrypted repository storage.
 let key = rvault_core::SecretKey::from_bytes(key_bytes);
-let entry = rvault_core::EntryRepository::new(&db, None)?.get(
+let plaintext = application_migration.read_and_remove_legacy_plaintext(
+    &db,
+    "example.com",
+    "me",
+)?;
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+repo.add(
+    &key,
+    rvault_core::NewEntry::new("example.com", "me", plaintext.as_bytes()),
+)?;
+
+// Then retrieve zeroizing bytes and let the application choose their destination.
+let entry = repo.get(
     &key,
     rvault_core::EntrySelector::new("example.com", "me"),
 )?;
 application_clipboard.write(entry.secret.expose())?;
 ```
+
+`Table::get_password` has no secure direct replacement because its contract assumes a plaintext
+stored row and couples retrieval to the clipboard. `EntryRepository::get` does not support
+plaintext rows. The application must explicitly migrate and encrypt legacy plaintext data before
+using repository retrieval; `application_migration` above represents application-owned migration
+code, not an `rvault-core` API.
 
 ### `encrypt_data` and `EncryptedData`
 
@@ -384,7 +410,8 @@ Import paths retain their existing upsert, pinned, and timestamp behavior.
 In 1.4, import code has a narrow `#[allow(deprecated)]` exception for `Table::entry_exists` and
 `Table::import_entry_with_key_result`. There is not yet a typed public import API that preserves
 timestamps and pin state; inventing one during the compatibility release would create a second
-storage contract. Remove this exception when the 2.0 import boundary is implemented.
+storage contract. Keep the adapter and exception through 2.0 unless and until the tested typed
+import boundary required above lands.
 
 ## Rollback instructions
 
