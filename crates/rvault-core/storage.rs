@@ -11,7 +11,14 @@ use rusqlite::{Connection, params};
 use std::path::PathBuf;
 use zeroize::Zeroizing;
 
+mod error;
 mod migration;
+mod repository;
+
+pub use error::StorageError;
+pub use repository::{
+    DecryptedEntry, EntryMetadata, EntryRepository, EntrySelector, EntryUpdate, NewEntry,
+};
 
 const CURRENT_DB_PATH: &str = "RVAULT_CURRENT_DB_PATH";
 const CURRENT_VAULT_NAME: &str = "RVAULT_CURRENT_VAULT_NAME";
@@ -625,6 +632,77 @@ mod tests {
         assert!(matches!(
             table.toggle_pin(&db, "missing".to_string(), "user".to_string()),
             Err(DatabaseError::Sqlite(_))
+        ));
+    }
+
+    #[test]
+    fn typed_api_classifies_missing_storage_row() {
+        let db = memory_db();
+        let repository = EntryRepository::new(&db, None).unwrap();
+        let key = crate::secret::SecretKey::from_bytes([7_u8; 32]);
+
+        let error = match repository.get(&key, EntrySelector::new("missing", "user")) {
+            Err(error) => error,
+            Ok(_) => panic!("missing entry was returned"),
+        };
+
+        assert!(matches!(error, StorageError::NotFound));
+    }
+
+    #[test]
+    fn typed_api_classifies_duplicate_identity_conflict() {
+        let db = memory_db();
+        let repository = EntryRepository::new(&db, None).unwrap();
+        let key = crate::secret::SecretKey::from_bytes([7_u8; 32]);
+        repository
+            .add(&key, NewEntry::new("github", "alice", b"first"))
+            .unwrap();
+
+        let error = repository
+            .add(&key, NewEntry::new("github", "alice", b"second"))
+            .unwrap_err();
+
+        assert!(matches!(error, StorageError::Conflict));
+    }
+
+    #[test]
+    fn typed_api_repository_crud_returns_secrets_and_metadata() {
+        let db = memory_db();
+        let repository = EntryRepository::new(&db, None).unwrap();
+        let key = crate::secret::SecretKey::from_bytes([7_u8; 32]);
+        repository
+            .add(&key, NewEntry::new("github", "alice", b"old-pass"))
+            .unwrap();
+
+        let created = repository
+            .get(&key, EntrySelector::new("github", "alice"))
+            .unwrap();
+        assert_eq!(created.secret.expose(), b"old-pass");
+        assert_eq!(created.metadata.platform, "github");
+        assert_eq!(repository.list_metadata().unwrap().len(), 1);
+
+        repository
+            .update(
+                &key,
+                EntrySelector::new("github", "alice"),
+                EntryUpdate::new("alice@example.com", b"new-pass"),
+            )
+            .unwrap();
+        repository
+            .set_pinned(EntrySelector::new("github", "alice@example.com"), true)
+            .unwrap();
+        let updated = repository
+            .get(&key, EntrySelector::new("github", "alice@example.com"))
+            .unwrap();
+        assert_eq!(updated.secret.expose(), b"new-pass");
+        assert!(updated.metadata.pinned);
+
+        repository
+            .remove(EntrySelector::new("github", "alice@example.com"))
+            .unwrap();
+        assert!(matches!(
+            repository.get(&key, EntrySelector::new("github", "alice@example.com")),
+            Err(StorageError::NotFound)
         ));
     }
 }

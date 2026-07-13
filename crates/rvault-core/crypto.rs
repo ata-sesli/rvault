@@ -11,6 +11,11 @@ use chacha20poly1305::{
 use clap::ValueEnum;
 use rand::seq::{IndexedRandom, SliceRandom};
 use zeroize::Zeroizing;
+
+mod error;
+
+use crate::secret::{SecretBytes, SecretKey};
+pub use error::CryptoError;
 #[derive(Debug, Clone, ValueEnum)]
 // Multiple encryption methods in future implementations
 pub enum Encryption {
@@ -34,6 +39,70 @@ pub struct DerivedEncryptedData {
 }
 pub struct HashedData {
     pub hash: String,
+}
+
+/// Authenticated ciphertext produced by [`encrypt`].
+pub struct Ciphertext {
+    nonce: [u8; 12],
+    bytes: Vec<u8>,
+}
+
+impl Ciphertext {
+    /// Constructs ciphertext from persisted components after validating the nonce.
+    pub fn try_from_parts(nonce: &[u8], bytes: Vec<u8>) -> Result<Self, CryptoError> {
+        let nonce: [u8; 12] = nonce
+            .try_into()
+            .map_err(|_| CryptoError::InvalidNonceLength {
+                actual: nonce.len(),
+            })?;
+        Ok(Self { nonce, bytes })
+    }
+
+    /// Returns the authenticated-encryption nonce.
+    pub fn nonce(&self) -> &[u8; 12] {
+        &self.nonce
+    }
+
+    /// Returns the encrypted bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// Encrypts bytes with an opaque secret key.
+pub fn encrypt(key: &SecretKey, plaintext: &[u8]) -> Result<Ciphertext, CryptoError> {
+    let cipher = ChaCha20Poly1305::new_from_slice(key.as_bytes()).map_err(|_| {
+        CryptoError::InvalidKeyLength {
+            actual: key.as_bytes().len(),
+        }
+    })?;
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let bytes = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|_| CryptoError::AuthenticationFailed)?;
+    Ciphertext::try_from_parts(nonce.as_slice(), bytes)
+}
+
+/// Decrypts authenticated ciphertext into zeroizing owned bytes.
+pub fn decrypt(key: &SecretKey, ciphertext: &Ciphertext) -> Result<SecretBytes, CryptoError> {
+    let cipher = ChaCha20Poly1305::new_from_slice(key.as_bytes()).map_err(|_| {
+        CryptoError::InvalidKeyLength {
+            actual: key.as_bytes().len(),
+        }
+    })?;
+    cipher
+        .decrypt(Nonce::from_slice(ciphertext.nonce()), ciphertext.bytes())
+        .map(SecretBytes::new)
+        .map_err(|_| CryptoError::AuthenticationFailed)
+}
+
+/// Generates a password or returns a typed length error.
+pub fn try_generate_password(length: u8, special_characters: bool) -> Result<String, CryptoError> {
+    let minimum = if special_characters { 4 } else { 3 };
+    if length < minimum {
+        return Err(CryptoError::InvalidPasswordLength { length, minimum });
+    }
+    Ok(generate_password(length, special_characters))
 }
 pub fn generate_key() -> String {
     let ek = ChaCha20Poly1305::generate_key(&mut OsRng); // A 32-byte random key
@@ -174,5 +243,55 @@ pub fn verify_password(password: &[u8], stored_hash: &str) -> bool {
     } else {
         // If the stored hash is invalid, verification fails
         false
+    }
+}
+
+#[cfg(test)]
+mod typed_api_tests {
+    use super::*;
+    use crate::secret::SecretKey;
+
+    #[test]
+    fn typed_api_rejects_invalid_nonce_length() {
+        let error = match Ciphertext::try_from_parts(&[0_u8; 11], vec![1, 2, 3]) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid nonce was accepted"),
+        };
+        assert!(matches!(
+            error,
+            CryptoError::InvalidNonceLength { actual: 11 }
+        ));
+    }
+
+    #[test]
+    fn typed_api_classifies_authentication_failure() {
+        let ciphertext = encrypt(&SecretKey::from_bytes([1_u8; 32]), b"secret").unwrap();
+        let error = match decrypt(&SecretKey::from_bytes([2_u8; 32]), &ciphertext) {
+            Err(error) => error,
+            Ok(_) => panic!("wrong key decrypted ciphertext"),
+        };
+        assert!(matches!(error, CryptoError::AuthenticationFailed));
+    }
+
+    #[test]
+    fn typed_api_rejects_short_password_length() {
+        let error = try_generate_password(2, false).unwrap_err();
+        assert!(matches!(
+            error,
+            CryptoError::InvalidPasswordLength {
+                length: 2,
+                minimum: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn typed_api_crypto_round_trips_secret_bytes() {
+        let key = SecretKey::from_bytes([7_u8; 32]);
+        let ciphertext = encrypt(&key, b"round trip").unwrap();
+        assert_eq!(ciphertext.nonce().len(), 12);
+        assert!(!ciphertext.bytes().is_empty());
+        assert_eq!(decrypt(&key, &ciphertext).unwrap().expose(), b"round trip");
+        assert_eq!(try_generate_password(12, true).unwrap().len(), 12);
     }
 }

@@ -1,5 +1,9 @@
 use thiserror::Error;
 
+pub use crate::crypto::CryptoError;
+pub use crate::session::SessionError;
+pub use crate::storage::StorageError;
+
 #[derive(Error, Debug)]
 pub enum DatabaseError {
     #[error("Path Error")]

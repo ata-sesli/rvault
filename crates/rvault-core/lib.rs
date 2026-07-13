@@ -23,7 +23,14 @@ pub mod vault;
 pub mod clipboard;
 pub mod watcher;
 
+pub use crypto::{Ciphertext, CryptoError, decrypt, encrypt, try_generate_password};
 pub use error::{ConfigError, DatabaseError};
+pub use secret::{SecretBytes, SecretKey};
+pub use session::{SessionError, SessionKey};
+pub use storage::{
+    DecryptedEntry, EntryMetadata, EntryRepository, EntrySelector, EntryUpdate, NewEntry,
+    StorageError,
+};
 pub use vault::VaultEntry;
 
 /// Locks the vault by ending the current session.

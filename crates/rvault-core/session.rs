@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::{config::Config, secret::SecretKey};
 use directories::ProjectDirs;
 use rand::Rng;
 use rand::distr::Alphanumeric;
@@ -12,6 +12,37 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const CURRENT_SESSION_FILE: &str = "current";
 const BROWSER_SESSION_FILE: &str = "browser-current";
 const SESSION_METADATA_VERSION: u8 = 1;
+
+mod error;
+
+pub use error::SessionError;
+
+/// Typed access to the current session key.
+pub struct SessionKey;
+
+impl SessionKey {
+    pub fn load() -> Result<SecretKey, SessionError> {
+        let token = read_current().map_err(|_| SessionError::Locked)?;
+        validate_session_token_typed(&token)?;
+        let session_dir = get_session_dir()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| SessionError::CorruptSession)?
+            .as_secs();
+        let legacy_timeout = match session_expiration_path(&session_dir, &token).try_exists() {
+            Ok(true) | Err(_) => 0,
+            Ok(false) => {
+                Config::new()
+                    .map_err(|_| SessionError::CorruptSession)?
+                    .session_timeout
+                    .parse::<u64>()
+                    .unwrap_or(15)
+                    * 60
+            }
+        };
+        load_key_at(&session_dir, &token, now, legacy_timeout)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +77,14 @@ fn validate_session_token(token: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err("Invalid session token.".to_string())
+    }
+}
+
+fn validate_session_token_typed(token: &str) -> Result<(), SessionError> {
+    if token.len() == 48 && token.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        Ok(())
+    } else {
+        Err(SessionError::InvalidToken)
     }
 }
 
@@ -200,72 +239,60 @@ pub fn start_session_with_timeout(
 
 /// Validates the current session token (from the env var) and returns the encryption key.
 pub fn get_key_from_session() -> Result<Vec<u8>, String> {
-    let token = read_current()?;
-    validate_session_token(&token)?;
-    let session_dir =
-        get_session_dir().map_err(|e| format!("Error accessing session directory: {}", e))?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "System clock error.".to_string())?
-        .as_secs();
-    let legacy_timeout = match session_expiration_path(&session_dir, &token).try_exists() {
-        Ok(true) | Err(_) => 0,
-        Ok(false) => {
-            let config = Config::new().map_err(|e| format!("Failed to load config: {e}"))?;
-            config.session_timeout.parse::<u64>().unwrap_or(15) * 60
-        }
-    };
-    get_key_from_session_at(&session_dir, &token, now, legacy_timeout)
+    SessionKey::load()
+        .map(|key| key.as_bytes().to_vec())
+        .map_err(|error| legacy_session_error(&error))
 }
 
-fn get_key_from_session_at(
+fn legacy_session_error(error: &SessionError) -> String {
+    match error {
+        SessionError::Locked => "Vault is locked. Invalid or expired session.".to_string(),
+        SessionError::Expired => "Vault is locked. Your session has expired.".to_string(),
+        SessionError::InvalidToken => "Invalid session token.".to_string(),
+        SessionError::CorruptSession => "Invalid session metadata.".to_string(),
+        SessionError::Io(source) => format!("Failed to read session key: {source}"),
+    }
+}
+
+fn load_key_at(
     session_dir: &Path,
     token: &str,
     now: u64,
     legacy_timeout_seconds: u64,
-) -> Result<Vec<u8>, String> {
-    validate_session_token(token)?;
+) -> Result<SecretKey, SessionError> {
+    validate_session_token_typed(token)?;
     let key_path = session_dir.join(token);
     if !key_path.exists() {
-        return Err("Vault is locked. Invalid or expired session.".to_string());
+        return Err(SessionError::Locked);
     }
     let sidecar_path = session_expiration_path(session_dir, token);
     match sidecar_path.try_exists() {
-        Err(error) => {
-            let cleanup = cleanup_session_files(session_dir, token);
-            return Err(with_cleanup_error(
-                format!("Invalid session metadata: {error}"),
-                cleanup,
-            ));
+        Err(_) => {
+            let _ = cleanup_session_files(session_dir, token);
+            return Err(SessionError::CorruptSession);
         }
         Ok(true) => {
             let metadata = fs::read(&sidecar_path)
-                .map_err(|error| format!("Invalid session metadata: {error}"))
+                .map_err(|_| SessionError::CorruptSession)
                 .and_then(|bytes| {
                     serde_json::from_slice::<SessionExpiration>(&bytes)
-                        .map_err(|error| format!("Invalid session metadata: {error}"))
+                        .map_err(|_| SessionError::CorruptSession)
                 });
             match metadata {
                 Ok(metadata)
                     if metadata.version == SESSION_METADATA_VERSION
                         && now < metadata.expires_at => {}
                 Ok(metadata) if metadata.version != SESSION_METADATA_VERSION => {
-                    let cleanup = cleanup_session_files(session_dir, token);
-                    return Err(with_cleanup_error(
-                        "Invalid session metadata version".to_string(),
-                        cleanup,
-                    ));
+                    let _ = cleanup_session_files(session_dir, token);
+                    return Err(SessionError::CorruptSession);
                 }
                 Ok(_) => {
-                    let cleanup = cleanup_session_files(session_dir, token);
-                    return Err(with_cleanup_error(
-                        "Vault is locked. Your session has expired.".to_string(),
-                        cleanup,
-                    ));
+                    let _ = cleanup_session_files(session_dir, token);
+                    return Err(SessionError::Expired);
                 }
                 Err(error) => {
-                    let cleanup = cleanup_session_files(session_dir, token);
-                    return Err(with_cleanup_error(error, cleanup));
+                    let _ = cleanup_session_files(session_dir, token);
+                    return Err(error);
                 }
             }
         }
@@ -275,26 +302,29 @@ fn get_key_from_session_at(
                 .and_then(|time| {
                     time.duration_since(UNIX_EPOCH)
                         .map_err(std::io::Error::other)
-                })
-                .map_err(|error| format!("Failed to read session metadata: {error}"))?
+                })?
                 .as_secs();
             if now.saturating_sub(modified) > legacy_timeout_seconds {
-                let cleanup = cleanup_session_files(session_dir, token);
-                return Err(with_cleanup_error(
-                    "Vault is locked. Your session has expired.".to_string(),
-                    cleanup,
-                ));
+                let _ = cleanup_session_files(session_dir, token);
+                return Err(SessionError::Expired);
             }
         }
     }
-    fs::read(key_path).map_err(|error| format!("Failed to read session key: {error}"))
+    let bytes = fs::read(key_path)?;
+    let bytes: [u8; 32] = bytes.try_into().map_err(|_| SessionError::CorruptSession)?;
+    Ok(SecretKey::from_bytes(bytes))
 }
 
-fn with_cleanup_error(message: String, cleanup: Result<(), String>) -> String {
-    match cleanup {
-        Ok(()) => message,
-        Err(error) => format!("{message}; cleanup failed: {error}"),
-    }
+#[cfg(test)]
+fn get_key_from_session_at(
+    session_dir: &Path,
+    token: &str,
+    now: u64,
+    legacy_timeout_seconds: u64,
+) -> Result<Vec<u8>, String> {
+    load_key_at(session_dir, token, now, legacy_timeout_seconds)
+        .map(|key| key.as_bytes().to_vec())
+        .map_err(|error| legacy_session_error(&error))
 }
 
 fn cleanup_session_files(session_dir: &Path, token: &str) -> Result<(), String> {
@@ -561,6 +591,22 @@ mod tests {
                 & 0o777,
             0o600
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn typed_api_classifies_expired_session() {
+        let root = temporary_session_root();
+        let token = start_session_with_timeout_at(&root, &[4_u8; 32], 1, 1_000)
+            .unwrap()
+            .unwrap();
+
+        let error = match load_key_at(&root, &token, 1_060, 900) {
+            Err(error) => error,
+            Ok(_) => panic!("expired session loaded"),
+        };
+
+        assert!(matches!(error, SessionError::Expired));
         fs::remove_dir_all(root).unwrap();
     }
 }
