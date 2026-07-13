@@ -8,7 +8,8 @@ use rvault_core::{
     portable_export,
     session::{self, SessionKey},
     storage::{
-        Database, EntryMetadata, EntryRepository, EntrySelector, EntryUpdate, NewEntry, Table,
+        Database, EntryMetadata, EntryRepository, EntrySelector, EntryUpdate, NewEntry,
+        StorageError, Table,
     },
     vault::Vault,
 };
@@ -811,13 +812,12 @@ impl App {
                                     if let Ok(db) = Database::new() {
                                         if let Ok(repository) = EntryRepository::new(&db, None) {
                                             if let Ok(ek) = SessionKey::load() {
-                                                let _ = repository.add(
+                                                let _ = add_or_update_entry(
+                                                    &repository,
                                                     &ek,
-                                                    NewEntry::new(
-                                                        &platform.value,
-                                                        &user_id.value,
-                                                        password.value.as_bytes(),
-                                                    ),
+                                                    &platform.value,
+                                                    &user_id.value,
+                                                    password.value.as_bytes(),
                                                 );
                                             }
                                         }
@@ -1128,6 +1128,7 @@ fn export_one_entry(
     std::fs::write(path, bytes).map_err(|e| format!("write export: {e}"))
 }
 
+#[allow(deprecated)] // 1.4 import boundary: preserves the existing conflict preview.
 fn preview_import_conflicts(path: &str) -> Result<usize, String> {
     let entries = decrypt_export_file(path)?;
     let db = Database::new().map_err(|e| e.to_string())?;
@@ -1140,6 +1141,7 @@ fn preview_import_conflicts(path: &str) -> Result<usize, String> {
     })
 }
 
+#[allow(deprecated)] // 1.4 import boundary: preserves imported timestamps and pin state.
 fn import_export_file(
     path: &str,
     overwrite_all: bool,
@@ -1197,9 +1199,57 @@ fn sanitize_file_name(value: &str) -> String {
     }
 }
 
+fn recover_duplicate_add(
+    add_result: Result<(), StorageError>,
+    update: impl FnOnce() -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
+    match add_result {
+        Err(StorageError::Conflict) => update(),
+        result => result,
+    }
+}
+
+fn add_or_update_entry(
+    repository: &EntryRepository<'_>,
+    key: &rvault_core::SecretKey,
+    platform: &str,
+    user_id: &str,
+    password: &[u8],
+) -> Result<(), StorageError> {
+    recover_duplicate_add(
+        repository.add(key, NewEntry::new(platform, user_id, password)),
+        || {
+            repository.update(
+                key,
+                EntrySelector::new(platform, user_id),
+                EntryUpdate::new(user_id, password),
+            )
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_add_runs_update_and_propagates_a_delete_race() {
+        let mut updated = false;
+        assert!(
+            recover_duplicate_add(Err(StorageError::Conflict), || {
+                updated = true;
+                Ok(())
+            })
+            .is_ok()
+        );
+        assert!(updated);
+        assert!(matches!(
+            recover_duplicate_add(Err(StorageError::Conflict), || {
+                Err(StorageError::NotFound)
+            }),
+            Err(StorageError::NotFound)
+        ));
+    }
 
     #[test]
     fn backup_master_password_validation_rejects_wrong_password() {

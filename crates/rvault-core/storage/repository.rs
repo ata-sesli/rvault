@@ -220,7 +220,24 @@ impl<'a> EntryRepository<'a> {
         selector: EntrySelector<'_>,
         pinned: bool,
     ) -> Result<(), StorageError> {
-        if pinned {
+        let current_query = format!(
+            "SELECT pinned FROM {} WHERE platform = ?1 AND user_id = ?2",
+            self.table.table_name
+        );
+        let current: Option<bool> = self
+            .db
+            .connection
+            .query_row(
+                &current_query,
+                [selector.platform, selector.user_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = current.ok_or(StorageError::NotFound)?;
+        if current == pinned {
+            return Ok(());
+        }
+        if pinned && !current {
             let query = format!(
                 "SELECT COUNT(*) FROM {} WHERE pinned = TRUE",
                 self.table.table_name

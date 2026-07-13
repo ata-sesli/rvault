@@ -8,6 +8,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
 
 const CURRENT_SESSION_FILE: &str = "current";
 const BROWSER_SESSION_FILE: &str = "browser-current";
@@ -22,9 +23,8 @@ pub struct SessionKey;
 
 impl SessionKey {
     pub fn load() -> Result<SecretKey, SessionError> {
-        let token = read_current().map_err(|_| SessionError::Locked)?;
-        validate_session_token_typed(&token)?;
         let session_dir = get_session_dir()?;
+        let token = read_current_typed_at(&session_dir)?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| SessionError::CorruptSession)?
@@ -310,9 +310,39 @@ fn load_key_at(
             }
         }
     }
-    let bytes = fs::read(key_path)?;
-    let bytes: [u8; 32] = bytes.try_into().map_err(|_| SessionError::CorruptSession)?;
-    Ok(SecretKey::from_bytes(bytes))
+    let bytes = Zeroizing::new(fs::read(key_path)?);
+    secret_key_from_buffer(bytes)
+}
+
+fn secret_key_from_buffer(bytes: Zeroizing<Vec<u8>>) -> Result<SecretKey, SessionError> {
+    let bytes: &[u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| SessionError::CorruptSession)?;
+    Ok(SecretKey::from_bytes(*bytes))
+}
+
+fn read_current_typed_at(session_dir: &Path) -> Result<String, SessionError> {
+    let token = match fs::read_to_string(session_dir.join(CURRENT_SESSION_FILE)) {
+        Ok(token) => token,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SessionError::Locked);
+        }
+        Err(error) => return Err(SessionError::Io(error)),
+    };
+    let token = token.trim().to_string();
+    validate_session_token_typed(&token)?;
+    Ok(token)
+}
+
+#[cfg(test)]
+fn load_key_from_pointer_at(
+    session_dir: &Path,
+    now: u64,
+    legacy_timeout_seconds: u64,
+) -> Result<SecretKey, SessionError> {
+    let token = read_current_typed_at(session_dir)?;
+    load_key_at(session_dir, &token, now, legacy_timeout_seconds)
 }
 
 #[cfg(test)]
@@ -323,6 +353,17 @@ fn get_key_from_session_at(
     legacy_timeout_seconds: u64,
 ) -> Result<Vec<u8>, String> {
     load_key_at(session_dir, token, now, legacy_timeout_seconds)
+        .map(|key| key.as_bytes().to_vec())
+        .map_err(|error| legacy_session_error(&error))
+}
+
+#[cfg(test)]
+fn get_key_from_session_root_at(
+    session_dir: &Path,
+    now: u64,
+    legacy_timeout_seconds: u64,
+) -> Result<Vec<u8>, String> {
+    load_key_from_pointer_at(session_dir, now, legacy_timeout_seconds)
         .map(|key| key.as_bytes().to_vec())
         .map_err(|error| legacy_session_error(&error))
 }
@@ -608,5 +649,59 @@ mod tests {
 
         assert!(matches!(error, SessionError::Expired));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn typed_pointer_read_classifies_missing_malformed_and_io_errors() {
+        let root = temporary_session_root();
+        fs::create_dir_all(&root).unwrap();
+
+        assert!(matches!(
+            load_key_from_pointer_at(&root, 1_000, 900),
+            Err(SessionError::Locked)
+        ));
+
+        fs::write(root.join(CURRENT_SESSION_FILE), "malformed").unwrap();
+        assert!(matches!(
+            load_key_from_pointer_at(&root, 1_000, 900),
+            Err(SessionError::InvalidToken)
+        ));
+
+        fs::remove_file(root.join(CURRENT_SESSION_FILE)).unwrap();
+        fs::create_dir(root.join(CURRENT_SESSION_FILE)).unwrap();
+        assert!(matches!(
+            load_key_from_pointer_at(&root, 1_000, 900),
+            Err(SessionError::Io(_))
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_adapter_preserves_pointer_error_messages() {
+        let root = temporary_session_root();
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(
+            get_key_from_session_root_at(&root, 1_000, 900).unwrap_err(),
+            "Vault is locked. Invalid or expired session."
+        );
+
+        fs::write(root.join(CURRENT_SESSION_FILE), "malformed").unwrap();
+        assert_eq!(
+            get_key_from_session_root_at(&root, 1_000, 900).unwrap_err(),
+            "Invalid session token."
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn session_key_conversion_requires_a_zeroizing_read_buffer() {
+        let key = secret_key_from_buffer(zeroize::Zeroizing::new(vec![6_u8; 32])).unwrap();
+        assert_eq!(key.as_bytes(), &[6_u8; 32]);
+        assert!(matches!(
+            secret_key_from_buffer(zeroize::Zeroizing::new(vec![6_u8; 31])),
+            Err(SessionError::CorruptSession)
+        ));
     }
 }

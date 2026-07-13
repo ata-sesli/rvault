@@ -99,7 +99,7 @@ impl Table {
     }
     #[deprecated(note = "use EntryRepository::remove")]
     pub fn remove_entry(&self, db: &Database, platform: String, user_id: String) {
-        let _ = self.remove_entry_result(db, platform, user_id);
+        let _ = self.remove_entry_impl(db, platform, user_id);
     }
     #[deprecated(note = "use EntryRepository::get and copy only at the application boundary")]
     pub fn get_password(
@@ -147,7 +147,7 @@ impl Table {
         id_and_password: String,
     ) {
         let (user_id, password) = id_and_password.split_once(':').unwrap();
-        let _ = self.add_entry_with_key_result(
+        let _ = self.add_entry_with_key_impl(
             db,
             encryption_key,
             platform,
@@ -156,7 +156,19 @@ impl Table {
         );
     }
 
+    #[deprecated(note = "use EntryRepository::add, or EntryRepository::update for replacement")]
     pub fn add_entry_with_key_result(
+        &self,
+        db: &Database,
+        encryption_key: &[u8],
+        platform: String,
+        user_id: String,
+        password: String,
+    ) -> Result<(), DatabaseError> {
+        self.add_entry_with_key_impl(db, encryption_key, platform, user_id, password)
+    }
+
+    fn add_entry_with_key_impl(
         &self,
         db: &Database,
         encryption_key: &[u8],
@@ -187,7 +199,17 @@ impl Table {
         Ok(())
     }
 
+    #[deprecated(note = "use EntryRepository::remove")]
     pub fn remove_entry_result(
+        &self,
+        db: &Database,
+        platform: String,
+        user_id: String,
+    ) -> Result<(), DatabaseError> {
+        self.remove_entry_impl(db, platform, user_id)
+    }
+
+    fn remove_entry_impl(
         &self,
         db: &Database,
         platform: String,
@@ -208,7 +230,19 @@ impl Table {
         Ok(())
     }
 
+    #[deprecated(
+        note = "use EntryRepository::list_metadata for application-level existence checks"
+    )]
     pub fn entry_exists(
+        &self,
+        db: &Database,
+        platform: &str,
+        user_id: &str,
+    ) -> Result<bool, DatabaseError> {
+        self.entry_exists_impl(db, platform, user_id)
+    }
+
+    fn entry_exists_impl(
         &self,
         db: &Database,
         platform: &str,
@@ -224,7 +258,19 @@ impl Table {
         Ok(exists)
     }
 
+    #[deprecated(
+        note = "no typed replacement preserves imported timestamps and pin state; isolate this import-only adapter before 2.0"
+    )]
     pub fn import_entry_with_key_result(
+        &self,
+        db: &Database,
+        encryption_key: &[u8],
+        entry: &crate::portable_export::ExportEntry,
+    ) -> Result<(), DatabaseError> {
+        self.import_entry_with_key_impl(db, encryption_key, entry)
+    }
+
+    fn import_entry_with_key_impl(
         &self,
         db: &Database,
         encryption_key: &[u8],
@@ -273,7 +319,27 @@ impl Table {
 
     /// Updates an existing entry's User ID and/or Password.
     /// Platform is used as a lookup key along with the OLD User ID, and cannot be changed.
+    #[deprecated(note = "use EntryRepository::update")]
     pub fn update_entry(
+        &self,
+        db: &Database,
+        encryption_key: &[u8],
+        platform: &str,
+        old_user_id: &str,
+        new_user_id: &str,
+        new_password: &str,
+    ) -> Result<(), DatabaseError> {
+        self.update_entry_impl(
+            db,
+            encryption_key,
+            platform,
+            old_user_id,
+            new_user_id,
+            new_password,
+        )
+    }
+
+    fn update_entry_impl(
         &self,
         db: &Database,
         encryption_key: &[u8],
@@ -329,7 +395,17 @@ impl Table {
         Ok(())
     }
 
+    #[deprecated(note = "use EntryRepository::set_pinned")]
     pub fn toggle_pin(
+        &self,
+        db: &Database,
+        platform: String,
+        user_id: String,
+    ) -> Result<bool, DatabaseError> {
+        self.toggle_pin_impl(db, platform, user_id)
+    }
+
+    fn toggle_pin_impl(
         &self,
         db: &Database,
         platform: String,
@@ -374,7 +450,18 @@ impl Table {
 
     /// Retrieves the decrypted password for an entry.
     /// Returns the plaintext password if successful.
+    #[deprecated(note = "use EntryRepository::get")]
     pub fn retrieve_password_with_key(
+        &self,
+        db: &Database,
+        encryption_key: &[u8],
+        platform: String,
+        user_id: String,
+    ) -> Result<String, DatabaseError> {
+        self.retrieve_password_with_key_impl(db, encryption_key, platform, user_id)
+    }
+
+    fn retrieve_password_with_key_impl(
         &self,
         db: &Database,
         encryption_key: &[u8],
@@ -422,7 +509,7 @@ impl Table {
         platform: String,
         user_id: String,
     ) -> Result<(), DatabaseError> {
-        match self.retrieve_password_with_key(db, encryption_key, platform, user_id) {
+        match self.retrieve_password_with_key_impl(db, encryption_key, platform, user_id) {
             Ok(plaintext) => {
                 copy_text(plaintext);
                 Ok(())
@@ -430,7 +517,12 @@ impl Table {
             Err(e) => Err(e),
         }
     }
+    #[deprecated(note = "use EntryRepository::list_metadata")]
     pub fn list(&self, db: &Database) -> Result<Vec<VaultEntry>, DatabaseError> {
+        self.list_impl(db)
+    }
+
+    fn list_impl(&self, db: &Database) -> Result<Vec<VaultEntry>, DatabaseError> {
         let query = format!(
             "SELECT id, platform, user_id, password, salt, nonce, pinned, created_at, updated_at FROM {} ORDER BY pinned DESC, platform ASC",
             &self.table_name
@@ -516,7 +608,7 @@ mod tests {
         let key = [7_u8; 32];
 
         table
-            .add_entry_with_key_result(
+            .add_entry_with_key_impl(
                 &db,
                 &key,
                 "github".to_string(),
@@ -526,12 +618,12 @@ mod tests {
             .expect("create entry");
 
         let created = table
-            .retrieve_password_with_key(&db, &key, "github".to_string(), "alice".to_string())
+            .retrieve_password_with_key_impl(&db, &key, "github".to_string(), "alice".to_string())
             .expect("retrieve created password");
         assert_eq!(created, "old-pass");
 
         table
-            .update_entry(
+            .update_entry_impl(
                 &db,
                 &key,
                 "github",
@@ -542,7 +634,7 @@ mod tests {
             .expect("update entry");
 
         let updated = table
-            .retrieve_password_with_key(
+            .retrieve_password_with_key_impl(
                 &db,
                 &key,
                 "github".to_string(),
@@ -552,10 +644,10 @@ mod tests {
         assert_eq!(updated, "new-pass");
 
         table
-            .remove_entry_result(&db, "github".to_string(), "alice@example.com".to_string())
+            .remove_entry_impl(&db, "github".to_string(), "alice@example.com".to_string())
             .expect("remove entry");
 
-        let deleted = table.retrieve_password_with_key(
+        let deleted = table.retrieve_password_with_key_impl(
             &db,
             &key,
             "github".to_string(),
@@ -577,7 +669,7 @@ mod tests {
         let table = Table::new(&db, None).unwrap();
         assert_missing_row(
             table
-                .toggle_pin(&db, "missing".to_string(), "user".to_string())
+                .toggle_pin_impl(&db, "missing".to_string(), "user".to_string())
                 .unwrap_err(),
         );
     }
@@ -588,7 +680,7 @@ mod tests {
         let table = Table::new(&db, None).unwrap();
         assert_missing_row(
             table
-                .update_entry(&db, &[7_u8; 32], "missing", "user", "new-user", "secret")
+                .update_entry_impl(&db, &[7_u8; 32], "missing", "user", "new-user", "secret")
                 .unwrap_err(),
         );
     }
@@ -599,7 +691,7 @@ mod tests {
         let table = Table::new(&db, None).unwrap();
         assert_missing_row(
             table
-                .remove_entry_result(&db, "missing".to_string(), "user".to_string())
+                .remove_entry_impl(&db, "missing".to_string(), "user".to_string())
                 .unwrap_err(),
         );
     }
@@ -610,7 +702,7 @@ mod tests {
         let table = Table::new(&db, None).unwrap();
         db.connection.execute("DROP TABLE main", []).unwrap();
         assert!(matches!(
-            table.toggle_pin(&db, "missing".to_string(), "user".to_string()),
+            table.toggle_pin_impl(&db, "missing".to_string(), "user".to_string()),
             Err(DatabaseError::Sqlite(_))
         ));
     }
@@ -643,6 +735,50 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, StorageError::Conflict));
+    }
+
+    fn repository_with_ten_pins<'a>(db: &'a Database, key: &SecretKey) -> EntryRepository<'a> {
+        let repository = EntryRepository::new(db, None).unwrap();
+        for index in 0..10 {
+            let user_id = format!("user-{index}");
+            repository
+                .add(key, NewEntry::new("pins", &user_id, b"secret"))
+                .unwrap();
+            repository
+                .set_pinned(EntrySelector::new("pins", &user_id), true)
+                .unwrap();
+        }
+        repository
+    }
+
+    #[test]
+    fn typed_pin_missing_target_is_not_found_even_at_cap() {
+        let db = memory_db();
+        let key = crate::secret::SecretKey::from_bytes([7_u8; 32]);
+        let repository = repository_with_ten_pins(&db, &key);
+
+        assert!(matches!(
+            repository.set_pinned(EntrySelector::new("missing", "user"), true),
+            Err(StorageError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn typed_pin_is_idempotent_for_an_already_pinned_target_at_cap() {
+        let db = memory_db();
+        let key = crate::secret::SecretKey::from_bytes([7_u8; 32]);
+        let repository = repository_with_ten_pins(&db, &key);
+
+        repository
+            .set_pinned(EntrySelector::new("pins", "user-0"), true)
+            .unwrap();
+        assert!(
+            repository
+                .get(&key, EntrySelector::new("pins", "user-0"))
+                .unwrap()
+                .metadata
+                .pinned
+        );
     }
 
     #[test]

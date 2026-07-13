@@ -36,6 +36,23 @@ fn legacy_signatures_remain_available_in_1x() {
     let _: fn(&Table, &Database, String, String) -> Result<(), DatabaseError> = Table::get_password;
     let _: fn(&Table, &Database, &[u8], String, String) -> Result<(), DatabaseError> =
         Table::get_password_with_key;
+    let _: fn(&Table, &Database, &[u8], String, String, String) -> Result<(), DatabaseError> =
+        Table::add_entry_with_key_result;
+    let _: fn(&Table, &Database, String, String) -> Result<(), DatabaseError> =
+        Table::remove_entry_result;
+    let _: fn(&Table, &Database, &str, &str) -> Result<bool, DatabaseError> = Table::entry_exists;
+    let _: fn(
+        &Table,
+        &Database,
+        &[u8],
+        &rvault_core::portable_export::ExportEntry,
+    ) -> Result<(), DatabaseError> = Table::import_entry_with_key_result;
+    let _: fn(&Table, &Database, &[u8], &str, &str, &str, &str) -> Result<(), DatabaseError> =
+        Table::update_entry;
+    let _: fn(&Table, &Database, String, String) -> Result<bool, DatabaseError> = Table::toggle_pin;
+    let _: fn(&Table, &Database, &[u8], String, String) -> Result<String, DatabaseError> =
+        Table::retrieve_password_with_key;
+    let _: fn(&Table, &Database) -> Result<Vec<VaultEntry>, DatabaseError> = Table::list;
 
     let _ = std::mem::size_of::<Vault>();
     let _ = std::mem::size_of::<VaultEntry>();

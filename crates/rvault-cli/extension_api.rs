@@ -218,8 +218,7 @@ fn handle_request(request: HostRequest) -> Result<Value, String> {
             password,
             vault,
         } => with_unlocked_repository(vault, |repository, key| {
-            repository
-                .add(key, NewEntry::new(&platform, &user_id, password.as_bytes()))
+            add_or_update_entry(repository, key, &platform, &user_id, password.as_bytes())
                 .map_err(typed_storage_error)?;
             Ok(json!({ "saved": true }))
         }),
@@ -460,6 +459,7 @@ fn decrypt_transfer_export(key: &[u8], token: &str) -> Result<Vec<ExportEntry>, 
     portable_export::decrypt_export_bytes(&identity, &bytes).map_err(storage_error)
 }
 
+#[allow(deprecated)] // 1.4 import boundary: preserves imported timestamps and pin state.
 fn import_conflicts(
     db: &Database,
     table: &Table,
@@ -480,6 +480,7 @@ fn import_conflicts(
         .collect()
 }
 
+#[allow(deprecated)] // 1.4 import boundary: preserves imported timestamps and pin state.
 fn apply_import(
     db: &Database,
     table: &Table,
@@ -652,6 +653,35 @@ fn typed_storage_error(failure: StorageError) -> String {
     }
 }
 
+fn recover_duplicate_add(
+    add_result: Result<(), StorageError>,
+    update: impl FnOnce() -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
+    match add_result {
+        Err(StorageError::Conflict) => update(),
+        result => result,
+    }
+}
+
+pub(crate) fn add_or_update_entry(
+    repository: &EntryRepository<'_>,
+    key: &SecretKey,
+    platform: &str,
+    user_id: &str,
+    password: &[u8],
+) -> Result<(), StorageError> {
+    recover_duplicate_add(
+        repository.add(key, NewEntry::new(platform, user_id, password)),
+        || {
+            repository.update(
+                key,
+                EntrySelector::new(platform, user_id),
+                EntryUpdate::new(user_id, password),
+            )
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,5 +712,25 @@ mod tests {
 
         assert_eq!(value["ok"], true);
         assert_eq!(value["data"]["locked"], true);
+    }
+
+    #[test]
+    fn duplicate_create_runs_compatibility_update() {
+        let mut updated = false;
+        let result = recover_duplicate_add(Err(StorageError::Conflict), || {
+            updated = true;
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(updated);
+    }
+
+    #[test]
+    fn duplicate_create_propagates_concurrent_delete() {
+        let result =
+            recover_duplicate_add(Err(StorageError::Conflict), || Err(StorageError::NotFound));
+
+        assert!(matches!(result, Err(StorageError::NotFound)));
     }
 }

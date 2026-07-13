@@ -16,7 +16,7 @@ use rvault_core::keystore::keystore_path;
 use rvault_core::{
     SecretKey, SessionKey, backup, clipboard, config, crypto, identity, keystore, portable_export,
     session, storage,
-    storage::{EntryRepository, EntrySelector, NewEntry, Table},
+    storage::{EntryRepository, EntrySelector, Table},
     vault,
 }; // Special case import for path
 
@@ -174,7 +174,13 @@ fn main() {
                     return;
                 };
                 let user_id_owned = user_id.to_string();
-                match repository.add(&ek, NewEntry::new(&platform, user_id, password.as_bytes())) {
+                match extension_api::add_or_update_entry(
+                    &repository,
+                    &ek,
+                    &platform,
+                    user_id,
+                    password.as_bytes(),
+                ) {
                     Ok(()) => println!(
                         "Account {} in {} has been added successfully!",
                         user_id_owned, platform
@@ -372,6 +378,7 @@ fn build_export_entries(
         .collect()
 }
 
+#[allow(deprecated)] // 1.4 import boundary: preserves imported timestamps and pin state.
 fn import_entries_from_file(
     db: &storage::Database,
     table: &Table,

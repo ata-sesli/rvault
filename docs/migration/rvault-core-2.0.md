@@ -42,10 +42,33 @@ fn add(db: &rvault_core::storage::Database, key: &SecretKey) -> Result<(), Stora
 ### `Table::add_entry_with_key`
 
 ```rust
-// 1.x: accepted raw key bytes and returned Result<(), DatabaseError>.
-table.add_entry_with_key(&db, key_bytes, "example.com".into(), "me".into(), "password".into())?;
+// 1.x: accepted raw key bytes and a combined identity/secret string, and returned ().
+table.add_entry_with_key(
+    &db,
+    &key_bytes,
+    "example.com".into(),
+    "me:password".into(),
+);
 
 // 2.0: the key is opaque and duplicate identity is StorageError::Conflict.
+let key = rvault_core::SecretKey::from_bytes(key_bytes);
+let repo = rvault_core::EntryRepository::new(&db, None)?;
+repo.add(&key, rvault_core::NewEntry::new("example.com", "me", b"password"))?;
+```
+
+### `Table::add_entry_with_key_result`
+
+```rust
+// 1.x: separate identity/secret strings and DatabaseError.
+table.add_entry_with_key_result(
+    &db,
+    &key_bytes,
+    "example.com".into(),
+    "me".into(),
+    "password".into(),
+)?;
+
+// 2.0: explicit secret ownership and StorageError.
 let key = rvault_core::SecretKey::from_bytes(key_bytes);
 let repo = rvault_core::EntryRepository::new(&db, None)?;
 repo.add(&key, rvault_core::NewEntry::new("example.com", "me", b"password"))?;
@@ -112,8 +135,9 @@ let plaintext: rvault_core::SecretBytes = rvault_core::decrypt(&key, &ciphertext
 consume(plaintext.expose());
 ```
 
-Persisted callers reconstruct a `Ciphertext` with `Ciphertext::try_from_parts`; invalid nonce
-length and encoding are reported as `CryptoError` variants.
+After decoding persisted bytes with the application's codec, callers reconstruct a `Ciphertext`
+with `Ciphertext::try_from_parts`; that constructor reports an invalid nonce length. Codec failures
+must be mapped separately to `CryptoError::InvalidEncoding`.
 
 ### Empty `Vault` export methods
 
@@ -232,6 +256,11 @@ RVault 1.4 migrates its CLI, TUI, and browser native host to the typed repositor
 session APIs. Their command/protocol behavior stays stable. Clipboard writes remain in the CLI/TUI,
 and native-host failures continue to map typed internal errors to stable protocol error codes.
 Import paths retain their existing upsert, pinned, and timestamp behavior.
+
+In 1.4, import code has a narrow `#[allow(deprecated)]` exception for `Table::entry_exists` and
+`Table::import_entry_with_key_result`. There is not yet a typed public import API that preserves
+timestamps and pin state; inventing one during the compatibility release would create a second
+storage contract. Remove this exception when the 2.0 import boundary is implemented.
 
 ## Rollback instructions
 
