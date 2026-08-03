@@ -42,6 +42,11 @@ impl InputState {
         self.cursor_position += c.len_utf8();
     }
 
+    pub fn insert_str(&mut self, value: &str) {
+        self.value.insert_str(self.cursor_position, value);
+        self.cursor_position += value.len();
+    }
+
     pub fn delete_char(&mut self) {
         if self.cursor_position > 0 {
             let mut new_pos = self.cursor_position - 1;

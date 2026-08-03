@@ -5,7 +5,8 @@ pub mod ui;
 use anyhow::Result;
 use app::{App, AppState};
 use crossterm::{
-    event, execute,
+    event::{self, DisableBracketedPaste, EnableBracketedPaste},
+    execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -15,7 +16,7 @@ pub fn run() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -24,7 +25,11 @@ pub fn run() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableBracketedPaste,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
 
     if let Err(err) = res {
@@ -55,11 +60,18 @@ where
             .map_err(|e| e.into())?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let event::Event::Key(key) = event::read()? {
-                app.tick();
-                if app.on_key(key)? {
-                    return Ok(());
+            match event::read()? {
+                event::Event::Key(key) => {
+                    app.tick();
+                    if app.on_key(key)? {
+                        return Ok(());
+                    }
                 }
+                event::Event::Paste(value) => {
+                    app.tick();
+                    app.on_paste(&value);
+                }
+                _ => {}
             }
         } else {
             app.tick();

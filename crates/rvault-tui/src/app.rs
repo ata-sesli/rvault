@@ -328,19 +328,85 @@ impl App {
         self.items.extend(unpinned);
     }
 
+    pub fn on_paste(&mut self, value: &str) {
+        match &mut self.state {
+            AppState::Authentication(input) => input.push_str(value),
+            AppState::Setup {
+                password,
+                confirm,
+                stage,
+                ..
+            } => match stage {
+                SetupStage::EnterPassword => password.push_str(value),
+                SetupStage::ConfirmPassword => confirm.push_str(value),
+            },
+            AppState::EditEntry {
+                user_id,
+                password,
+                stage,
+                ..
+            } => match stage {
+                EditEntryStage::UserId => user_id.insert_str(value),
+                EditEntryStage::Password => password.insert_str(value),
+            },
+            AppState::AddEntry {
+                platform,
+                user_id,
+                password,
+                stage,
+            } => match stage {
+                AddEntryStage::Platform => platform.insert_str(value),
+                AddEntryStage::UserId => user_id.insert_str(value),
+                AddEntryStage::Password => password.insert_str(value),
+            },
+            AppState::BackupCreate {
+                path,
+                password,
+                stage,
+            } => active_backup_create_input(path, password, stage).insert_str(value),
+            AppState::BackupRestore {
+                path,
+                password,
+                confirm,
+                stage,
+            } => active_backup_restore_input(path, password, confirm, stage).insert_str(value),
+            AppState::ExportEntry {
+                recipient,
+                path,
+                stage,
+                ..
+            } => active_export_input(recipient, path, stage).insert_str(value),
+            AppState::ImportExport { path } => path.insert_str(value),
+            AppState::MainTable
+            | AppState::Generator
+            | AppState::RemoveConfirmation { .. }
+            | AppState::ImportExportConfirm { .. }
+            | AppState::ThemeSelection
+            | AppState::SortSelection => {}
+        }
+    }
+
+    fn handle_entry_save_result(&mut self, result: Result<(), String>) -> bool {
+        match result {
+            Ok(()) => {
+                self.show_toast("Entry saved!");
+                true
+            }
+            Err(error) => {
+                self.show_toast(&format!("Failed to save entry: {error}"));
+                false
+            }
+        }
+    }
+
     pub fn on_key(&mut self, key: crossterm::event::KeyEvent) -> io::Result<bool> {
         if key.kind != KeyEventKind::Press {
             return Ok(false);
         }
 
-        // Global shortcut: Shift+Q to Lock & Quit
-        if let KeyCode::Char('Q') = key.code {
-            let _ = rvault_core::lock(); // Best effort lock
-            return Ok(true); // Signal to quit
-        }
-
         let mut transition_to_main = false;
         let mut transition_to_login = false;
+        let mut entry_save_result = None;
 
         match &mut self.state {
             AppState::Authentication(input) => {
@@ -366,7 +432,7 @@ impl App {
                         }
                         input.clear();
                     }
-                    KeyCode::Esc | KeyCode::Char('Q') => return Ok(true), // Signal to quit. Shift+Q maps to Char('Q') usually.
+                    KeyCode::Esc => return Ok(true),
                     KeyCode::Char(c) => input.push(c),
                     KeyCode::Backspace => {
                         input.pop();
@@ -431,7 +497,10 @@ impl App {
                         };
                     }
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
-                    KeyCode::Char('Q') => return Ok(true), // Lock and Quit immediately
+                    KeyCode::Char('Q') => {
+                        let _ = rvault_core::lock();
+                        return Ok(true);
+                    }
                     KeyCode::Tab => self.next_tab(),
                     KeyCode::Down => {
                         let i = match self.list_state.selected() {
@@ -723,33 +792,12 @@ impl App {
                             }
                             EditEntryStage::Password => {
                                 if !password.value.is_empty() {
-                                    // Save updates
-                                    if let Ok(db) = Database::new() {
-                                        if let Ok(repository) = EntryRepository::new(&db, None) {
-                                            if let Ok(ek) = SessionKey::load() {
-                                                if let Err(_e) = repository.update(
-                                                    &ek,
-                                                    EntrySelector::new(platform, original_user_id),
-                                                    EntryUpdate::new(
-                                                        &user_id.value,
-                                                        password.value.as_bytes(),
-                                                    ),
-                                                ) {
-                                                    // Handle error? For now just print to stderr or set global error
-                                                    // self.error = Some(...) // We don't have a global error field in AppState enum variants easily accessible without refactor.
-                                                    // But we do have self.auth_error in App struct.
-                                                    // Assuming we can't easily set self.auth_error from inside match without mutable borrow issues if helper methods aren't used.
-                                                    // But we are in `match &mut self.state`. We can modify `self.auth_error`?
-                                                    // No, `self.state` is borrowed mutably. `self.auth_error` is another field.
-                                                    // We need to split borrows or use boolean flag.
-                                                    // For simplicity, if error, we might fail silently or print to stderr (which TUI hides).
-                                                    // Ideally we'd transition to MainTable with an error message.
-                                                    // Let's just transition to main table.
-                                                }
-                                            }
-                                        }
-                                    }
-                                    transition_to_main = true;
+                                    entry_save_result = Some(update_entry(
+                                        platform,
+                                        original_user_id,
+                                        &user_id.value,
+                                        password.value.as_bytes(),
+                                    ));
                                 }
                             }
                         }
@@ -808,21 +856,11 @@ impl App {
                             }
                             AddEntryStage::Password => {
                                 if !password.value.is_empty() {
-                                    // Save the entry
-                                    if let Ok(db) = Database::new() {
-                                        if let Ok(repository) = EntryRepository::new(&db, None) {
-                                            if let Ok(ek) = SessionKey::load() {
-                                                let _ = add_or_update_entry(
-                                                    &repository,
-                                                    &ek,
-                                                    &platform.value,
-                                                    &user_id.value,
-                                                    password.value.as_bytes(),
-                                                );
-                                            }
-                                        }
-                                    }
-                                    transition_to_main = true;
+                                    entry_save_result = Some(save_entry(
+                                        &platform.value,
+                                        &user_id.value,
+                                        password.value.as_bytes(),
+                                    ));
                                 }
                             }
                         }
@@ -1037,6 +1075,10 @@ impl App {
             },
         }
 
+        if let Some(result) = entry_save_result {
+            transition_to_main = self.handle_entry_save_result(result);
+        }
+
         if transition_to_main {
             self.state = AppState::MainTable;
             self.refresh_vault_list();
@@ -1228,9 +1270,93 @@ fn add_or_update_entry(
     )
 }
 
+fn save_entry(platform: &str, user_id: &str, password: &[u8]) -> Result<(), String> {
+    let db = Database::new().map_err(|error| error.to_string())?;
+    let repository = EntryRepository::new(&db, None).map_err(|error| error.to_string())?;
+    let key = SessionKey::load().map_err(|error| error.to_string())?;
+    add_or_update_entry(&repository, &key, platform, user_id, password)
+        .map_err(|error| error.to_string())
+}
+
+fn update_entry(
+    platform: &str,
+    original_user_id: &str,
+    user_id: &str,
+    password: &[u8],
+) -> Result<(), String> {
+    let db = Database::new().map_err(|error| error.to_string())?;
+    let repository = EntryRepository::new(&db, None).map_err(|error| error.to_string())?;
+    let key = SessionKey::load().map_err(|error| error.to_string())?;
+    repository
+        .update(
+            &key,
+            EntrySelector::new(platform, original_user_id),
+            EntryUpdate::new(user_id, password),
+        )
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+
+    #[test]
+    fn uppercase_q_is_text_while_entering_a_secret() {
+        let mut app = App::new();
+        app.state = AppState::AddEntry {
+            platform: InputState::with_value("service".to_string()),
+            user_id: InputState::with_value("account".to_string()),
+            password: InputState::new(),
+            stage: AddEntryStage::Password,
+        };
+
+        let should_quit = app
+            .on_key(KeyEvent::new(
+                KeyCode::Char('Q'),
+                KeyModifiers::SHIFT,
+            ))
+            .expect("handle key");
+
+        assert!(!should_quit);
+        let AppState::AddEntry { password, .. } = &app.state else {
+            panic!("expected add-entry state");
+        };
+        assert_eq!(password.value, "Q");
+    }
+
+    #[test]
+    fn pasted_secret_is_inserted_atomically_including_uppercase_q() {
+        let mut app = App::new();
+        app.state = AppState::AddEntry {
+            platform: InputState::with_value("service".to_string()),
+            user_id: InputState::with_value("account".to_string()),
+            password: InputState::new(),
+            stage: AddEntryStage::Password,
+        };
+
+        app.on_paste("api-key-Qxy");
+
+        let AppState::AddEntry { password, .. } = &app.state else {
+            panic!("expected add-entry state");
+        };
+        assert_eq!(password.value, "api-key-Qxy");
+        assert_eq!(password.cursor_position, "api-key-Qxy".len());
+    }
+
+    #[test]
+    fn entry_save_error_is_shown_in_the_tui() {
+        let mut app = App::new();
+
+        let saved = app.handle_entry_save_result(Err("database unavailable".to_string()));
+
+        assert!(!saved);
+        let toast = app.toast.expect("save error toast");
+        assert_eq!(
+            toast.message,
+            "Failed to save entry: database unavailable"
+        );
+    }
 
     #[test]
     fn duplicate_add_runs_update_and_propagates_a_delete_race() {
