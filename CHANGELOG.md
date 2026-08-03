@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1
+
+- Fixed pasted secrets containing uppercase `Q` unexpectedly locking and closing the TUI.
+- Added bracketed-paste handling so pasted values are inserted as a single input operation.
+- Reported add and edit failures inside the TUI instead of silently discarding them.
+
 ## 1.4.0
 
 - Added typed `Ciphertext`, `SecretKey`, and `SecretBytes` crypto operations with `CryptoError`.

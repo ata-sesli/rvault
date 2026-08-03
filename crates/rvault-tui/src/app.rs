@@ -409,37 +409,35 @@ impl App {
         let mut entry_save_result = None;
 
         match &mut self.state {
-            AppState::Authentication(input) => {
-                match key.code {
-                    KeyCode::Enter => {
-                        let config = config::Config::new().unwrap_or_default();
-                        if let Some(stored_hash) = &config.master_password_hash {
-                            match Vault::get_encryption_key(input, stored_hash) {
-                                Ok(key) => {
-                                    if let Ok(token) = session::start_session(&key) {
-                                        let _ = session::write_current(&token);
-                                        transition_to_main = true;
-                                    } else {
-                                        self.auth_error = Some("Failed to start session".into());
-                                    }
-                                }
-                                Err(_) => {
-                                    self.auth_error = Some("Invalid Password".into());
+            AppState::Authentication(input) => match key.code {
+                KeyCode::Enter => {
+                    let config = config::Config::new().unwrap_or_default();
+                    if let Some(stored_hash) = &config.master_password_hash {
+                        match Vault::get_encryption_key(input, stored_hash) {
+                            Ok(key) => {
+                                if let Ok(token) = session::start_session(&key) {
+                                    let _ = session::write_current(&token);
+                                    transition_to_main = true;
+                                } else {
+                                    self.auth_error = Some("Failed to start session".into());
                                 }
                             }
-                        } else {
-                            self.auth_error = Some("RVault not set up.".into());
+                            Err(_) => {
+                                self.auth_error = Some("Invalid Password".into());
+                            }
                         }
-                        input.clear();
+                    } else {
+                        self.auth_error = Some("RVault not set up.".into());
                     }
-                    KeyCode::Esc => return Ok(true),
-                    KeyCode::Char(c) => input.push(c),
-                    KeyCode::Backspace => {
-                        input.pop();
-                    }
-                    _ => {}
+                    input.clear();
                 }
-            }
+                KeyCode::Esc => return Ok(true),
+                KeyCode::Char(c) => input.push(c),
+                KeyCode::Backspace => {
+                    input.pop();
+                }
+                _ => {}
+            },
             AppState::MainTable => {
                 match key.code {
                     KeyCode::Char('a') => {
@@ -781,123 +779,115 @@ impl App {
                 user_id,
                 password,
                 stage,
-            } => {
-                match key.code {
-                    KeyCode::Enter => {
-                        match stage {
-                            EditEntryStage::UserId => {
-                                if !user_id.value.is_empty() {
-                                    *stage = EditEntryStage::Password;
-                                }
-                            }
-                            EditEntryStage::Password => {
-                                if !password.value.is_empty() {
-                                    entry_save_result = Some(update_entry(
-                                        platform,
-                                        original_user_id,
-                                        &user_id.value,
-                                        password.value.as_bytes(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Left => match stage {
-                        EditEntryStage::UserId => user_id.move_cursor_left(),
-                        EditEntryStage::Password => password.move_cursor_left(),
-                    },
-                    KeyCode::Right => match stage {
-                        EditEntryStage::UserId => user_id.move_cursor_right(),
-                        EditEntryStage::Password => password.move_cursor_right(),
-                    },
-                    KeyCode::Char(c) => match stage {
-                        EditEntryStage::UserId => user_id.insert_char(c),
-                        EditEntryStage::Password => password.insert_char(c),
-                    },
-                    KeyCode::Backspace => match stage {
-                        EditEntryStage::UserId => user_id.delete_char(),
-                        EditEntryStage::Password => password.delete_char(),
-                    },
-                    KeyCode::Up => {
-                        if let EditEntryStage::Password = stage {
-                            *stage = EditEntryStage::UserId;
-                        }
-                    }
-                    KeyCode::Down => {
-                        if let EditEntryStage::UserId = stage {
+            } => match key.code {
+                KeyCode::Enter => match stage {
+                    EditEntryStage::UserId => {
+                        if !user_id.value.is_empty() {
                             *stage = EditEntryStage::Password;
                         }
                     }
-                    KeyCode::Esc => {
-                        transition_to_main = true;
+                    EditEntryStage::Password => {
+                        if !password.value.is_empty() {
+                            entry_save_result = Some(update_entry(
+                                platform,
+                                original_user_id,
+                                &user_id.value,
+                                password.value.as_bytes(),
+                            ));
+                        }
                     }
-                    _ => {}
+                },
+                KeyCode::Left => match stage {
+                    EditEntryStage::UserId => user_id.move_cursor_left(),
+                    EditEntryStage::Password => password.move_cursor_left(),
+                },
+                KeyCode::Right => match stage {
+                    EditEntryStage::UserId => user_id.move_cursor_right(),
+                    EditEntryStage::Password => password.move_cursor_right(),
+                },
+                KeyCode::Char(c) => match stage {
+                    EditEntryStage::UserId => user_id.insert_char(c),
+                    EditEntryStage::Password => password.insert_char(c),
+                },
+                KeyCode::Backspace => match stage {
+                    EditEntryStage::UserId => user_id.delete_char(),
+                    EditEntryStage::Password => password.delete_char(),
+                },
+                KeyCode::Up => {
+                    if let EditEntryStage::Password = stage {
+                        *stage = EditEntryStage::UserId;
+                    }
                 }
-            }
+                KeyCode::Down => {
+                    if let EditEntryStage::UserId = stage {
+                        *stage = EditEntryStage::Password;
+                    }
+                }
+                KeyCode::Esc => {
+                    transition_to_main = true;
+                }
+                _ => {}
+            },
             AppState::AddEntry {
                 platform,
                 user_id,
                 password,
                 stage,
-            } => {
-                match key.code {
-                    KeyCode::Esc => transition_to_main = true,
-                    KeyCode::Enter => {
-                        match stage {
-                            AddEntryStage::Platform => {
-                                if !platform.value.is_empty() {
-                                    *stage = AddEntryStage::UserId;
-                                }
-                            }
-                            AddEntryStage::UserId => {
-                                if !user_id.value.is_empty() {
-                                    *stage = AddEntryStage::Password;
-                                }
-                            }
-                            AddEntryStage::Password => {
-                                if !password.value.is_empty() {
-                                    entry_save_result = Some(save_entry(
-                                        &platform.value,
-                                        &user_id.value,
-                                        password.value.as_bytes(),
-                                    ));
-                                }
-                            }
+            } => match key.code {
+                KeyCode::Esc => transition_to_main = true,
+                KeyCode::Enter => match stage {
+                    AddEntryStage::Platform => {
+                        if !platform.value.is_empty() {
+                            *stage = AddEntryStage::UserId;
                         }
                     }
-                    KeyCode::Left => match stage {
-                        AddEntryStage::Platform => platform.move_cursor_left(),
-                        AddEntryStage::UserId => user_id.move_cursor_left(),
-                        AddEntryStage::Password => password.move_cursor_left(),
-                    },
-                    KeyCode::Right => match stage {
-                        AddEntryStage::Platform => platform.move_cursor_right(),
-                        AddEntryStage::UserId => user_id.move_cursor_right(),
-                        AddEntryStage::Password => password.move_cursor_right(),
-                    },
-                    KeyCode::Backspace => match stage {
-                        AddEntryStage::Platform => platform.delete_char(),
-                        AddEntryStage::UserId => user_id.delete_char(),
-                        AddEntryStage::Password => password.delete_char(),
-                    },
-                    KeyCode::Up => match stage {
-                        AddEntryStage::Platform => {}
-                        AddEntryStage::UserId => *stage = AddEntryStage::Platform,
-                        AddEntryStage::Password => *stage = AddEntryStage::UserId,
-                    },
-                    KeyCode::Down => match stage {
-                        AddEntryStage::Platform => *stage = AddEntryStage::UserId,
-                        AddEntryStage::UserId => *stage = AddEntryStage::Password,
-                        AddEntryStage::Password => {}
-                    },
-                    KeyCode::Char(c) => match stage {
-                        AddEntryStage::Platform => platform.insert_char(c),
-                        AddEntryStage::UserId => user_id.insert_char(c),
-                        AddEntryStage::Password => password.insert_char(c),
-                    },
-                    _ => {}
-                }
-            }
+                    AddEntryStage::UserId => {
+                        if !user_id.value.is_empty() {
+                            *stage = AddEntryStage::Password;
+                        }
+                    }
+                    AddEntryStage::Password => {
+                        if !password.value.is_empty() {
+                            entry_save_result = Some(save_entry(
+                                &platform.value,
+                                &user_id.value,
+                                password.value.as_bytes(),
+                            ));
+                        }
+                    }
+                },
+                KeyCode::Left => match stage {
+                    AddEntryStage::Platform => platform.move_cursor_left(),
+                    AddEntryStage::UserId => user_id.move_cursor_left(),
+                    AddEntryStage::Password => password.move_cursor_left(),
+                },
+                KeyCode::Right => match stage {
+                    AddEntryStage::Platform => platform.move_cursor_right(),
+                    AddEntryStage::UserId => user_id.move_cursor_right(),
+                    AddEntryStage::Password => password.move_cursor_right(),
+                },
+                KeyCode::Backspace => match stage {
+                    AddEntryStage::Platform => platform.delete_char(),
+                    AddEntryStage::UserId => user_id.delete_char(),
+                    AddEntryStage::Password => password.delete_char(),
+                },
+                KeyCode::Up => match stage {
+                    AddEntryStage::Platform => {}
+                    AddEntryStage::UserId => *stage = AddEntryStage::Platform,
+                    AddEntryStage::Password => *stage = AddEntryStage::UserId,
+                },
+                KeyCode::Down => match stage {
+                    AddEntryStage::Platform => *stage = AddEntryStage::UserId,
+                    AddEntryStage::UserId => *stage = AddEntryStage::Password,
+                    AddEntryStage::Password => {}
+                },
+                KeyCode::Char(c) => match stage {
+                    AddEntryStage::Platform => platform.insert_char(c),
+                    AddEntryStage::UserId => user_id.insert_char(c),
+                    AddEntryStage::Password => password.insert_char(c),
+                },
+                _ => {}
+            },
             AppState::BackupCreate {
                 path,
                 password,
@@ -1312,10 +1302,7 @@ mod tests {
         };
 
         let should_quit = app
-            .on_key(KeyEvent::new(
-                KeyCode::Char('Q'),
-                KeyModifiers::SHIFT,
-            ))
+            .on_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT))
             .expect("handle key");
 
         assert!(!should_quit);
@@ -1352,10 +1339,7 @@ mod tests {
 
         assert!(!saved);
         let toast = app.toast.expect("save error toast");
-        assert_eq!(
-            toast.message,
-            "Failed to save entry: database unavailable"
-        );
+        assert_eq!(toast.message, "Failed to save entry: database unavailable");
     }
 
     #[test]
