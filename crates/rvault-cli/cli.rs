@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 /// RVault: A modern, secure password manager using encrypted local vaults.
 #[derive(Debug, Parser)]
 #[command(version, about = "Welcome to RVault!", author = "Ata Sesli")]
@@ -96,7 +96,7 @@ pub enum Commands {
     /// Must run if user runs the app for the first time, it prompts and sets the master password.
     /// Example Usage: rvault setup
     Setup {},
-    /// Enables or disables RVault's Helium browser integration.
+    /// Enables or disables RVault browser integration.
     Browser {
         #[command(subcommand)]
         command: BrowserCommands,
@@ -126,10 +126,24 @@ pub enum BackupCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum BrowserCommands {
-    /// Enables RVault's Helium browser integration.
-    Enable,
-    /// Disables RVault's Helium browser integration.
-    Disable,
+    /// Enables RVault browser integration.
+    Enable {
+        #[arg(long, value_enum, default_value_t = Browser::Helium)]
+        browser: Browser,
+    },
+    /// Disables RVault browser integration.
+    Disable {
+        #[arg(long, value_enum, default_value_t = Browser::Helium)]
+        browser: Browser,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum Browser {
+    Helium,
+    Chrome,
+    Chromium,
+    Firefox,
 }
 
 #[derive(Debug, Subcommand)]
@@ -149,8 +163,20 @@ mod tests {
 
         match cli.command {
             Some(Commands::Browser {
-                command: BrowserCommands::Enable,
-            }) => {}
+                command: BrowserCommands::Enable { browser },
+            }) => assert_eq!(browser, Browser::Helium),
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn browser_enable_parses_explicit_browser() {
+        let cli = Cli::parse_from(["rvault", "browser", "enable", "--browser", "firefox"]);
+
+        match cli.command {
+            Some(Commands::Browser {
+                command: BrowserCommands::Enable { browser },
+            }) => assert_eq!(browser, Browser::Firefox),
             other => panic!("unexpected command: {other:?}"),
         }
     }
@@ -161,8 +187,8 @@ mod tests {
 
         match cli.command {
             Some(Commands::Browser {
-                command: BrowserCommands::Disable,
-            }) => {}
+                command: BrowserCommands::Disable { browser },
+            }) => assert_eq!(browser, Browser::Helium),
             other => panic!("unexpected command: {other:?}"),
         }
     }

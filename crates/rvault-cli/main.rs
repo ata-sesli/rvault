@@ -21,8 +21,10 @@ use rvault_core::{
 }; // Special case import for path
 
 fn main() {
-    let first_arg = std::env::args().nth(1);
-    if host::is_native_messaging_launch(first_arg.as_deref()) {
+    let mut native_args = std::env::args().skip(1);
+    let first_arg = native_args.next();
+    let second_arg = native_args.next();
+    if host::is_native_messaging_launch(first_arg.as_deref(), second_arg.as_deref()) {
         if let Err(e) = native::serve_stdio() {
             eprintln!("RVault native host error: {e}");
         }
