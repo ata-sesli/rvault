@@ -1,15 +1,15 @@
 # RVault
 
-RVault is a local-first password manager written in Rust, with a terminal UI, a CLI, and a Helium browser extension that talks to the local `rvault` binary through native messaging.
+RVault is a local-first password manager written in Rust, with a terminal UI, a CLI, and a browser extension that talks to the local `rvault` binary through native messaging.
 
-Current version: `1.4.0`.
+Current version: `1.4.1`.
 
 RVault keeps storage local. Passwords are encrypted before they are written to SQLite, browser integration goes through a local native host, and the extension does not store plaintext credentials.
 
 ## Contents
 
 - [Install RVault](#install-rvault)
-- [Install the Helium Extension Locally](#install-the-helium-extension-locally)
+- [Install the Browser Extension](#install-the-browser-extension)
 - [Quick Start](#quick-start)
 - [Backup and Restore](#backup-and-restore)
 - [Encrypted Export and Import](#encrypted-export-and-import)
@@ -24,16 +24,16 @@ RVault keeps storage local. Passwords are encrypted before they are written to S
 
 ### From GitHub Releases
 
-After the `v1.2.0` release is published, install the CLI from the release assets:
+Install the CLI from the `v1.4.1` release assets:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v1.2.0/rvault-cli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v1.4.1/rvault-cli-installer.sh | sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v1.2.0/rvault-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v1.4.1/rvault-cli-installer.ps1 | iex"
 ```
 
 Confirm the install:
@@ -45,7 +45,7 @@ rvault --version
 Expected version:
 
 ```text
-rvault-cli 1.2.0
+rvault-cli 1.4.1
 ```
 
 ### From Source
@@ -54,7 +54,7 @@ Requirements:
 
 - Rust toolchain with Cargo
 - Bun, only needed for the browser extension
-- Helium on macOS, only needed for browser integration
+- Helium, Chrome, Chromium, or Firefox, only needed to run browser integration
 
 Install the CLI from this repository:
 
@@ -71,68 +71,60 @@ Run the terminal UI:
 rvault
 ```
 
-## Install the Helium Extension Locally
+## Install the Browser Extension
 
-The RVault extension is not published in the Chrome Web Store for `1.2.0`. Install it locally in Helium.
+RVault supports Helium, Google Chrome, Chromium, and Firefox through local native messaging. The browser starts the installed `rvault` binary when the extension sends a request; RVault does not run a server or background daemon.
 
-This v1 path targets **Helium on macOS**. `rvault browser enable` writes Helium's native messaging manifest here:
+### Helium, Chrome, and Chromium
 
-```text
-~/Library/Application Support/net.imput.helium/NativeMessagingHosts/io.github.ata_sesli.rvault.json
-```
-
-### Option A: Install From a Release ZIP
-
-1. Install the `rvault` CLI first.
-
-2. Download `rvault-extension-1.2.0.zip` from the `v1.2.0` GitHub release.
-
-3. Unzip it somewhere stable, for example:
+1. Install the `rvault` CLI.
+2. Download `rvault-extension-<version>.zip` from the matching GitHub release.
+3. Extract it somewhere that will not move.
+4. Open `chrome://extensions` in the browser.
+5. Enable **Developer mode**, choose **Load unpacked**, and select the extracted directory.
+6. Register the native messaging host for that browser:
 
 ```bash
-mkdir -p ~/Applications/rvault-extension
-unzip rvault-extension-1.2.0.zip -d ~/Applications/rvault-extension
+rvault browser enable --browser helium
+rvault browser enable --browser chrome
+rvault browser enable --browser chromium
 ```
 
-4. Open Helium and go to:
-
-```text
-chrome://extensions
-```
-
-5. Enable **Developer mode**.
-
-6. Click **Load unpacked**.
-
-7. Select:
-
-```text
-~/Applications/rvault-extension
-```
-
-8. Register RVault as Helium's native messaging host:
+The original command remains compatible and defaults to Helium:
 
 ```bash
 rvault browser enable
 ```
 
-9. Click the RVault toolbar icon in Helium.
-
-If you move or reinstall the `rvault` binary, run this again:
+To remove a registration, use the matching browser value:
 
 ```bash
-rvault browser enable
+rvault browser disable --browser chrome
 ```
 
-To remove the native messaging registration:
+Helium registration is available on macOS. Chrome and Chromium registration is available on macOS, Linux, and Windows.
+
+### Firefox
+
+Releases produced after this browser-support change include a Mozilla-signed `rvault-extension-firefox-<version>.xpi`. Open the XPI in Firefox and approve the installation, then register the native host:
 
 ```bash
-rvault browser disable
+rvault browser enable --browser firefox
 ```
 
-### Option B: Build the Extension Locally
+Firefox registration is available on macOS, Linux, and Windows. The extension uses the fixed add-on ID `rvault@ata-sesli.github.io`, which must match RVault's native host manifest.
 
-From the repository root:
+For local development, build the Firefox target and load its manifest temporarily from `about:debugging`:
+
+```bash
+cd extension
+bun install
+bun run build:firefox
+```
+
+Select `extension/build/firefox-mv3-prod/manifest.json` when Firefox asks for a temporary add-on file.
+
+### Build the Chromium Extension Locally
 
 ```bash
 cd extension
@@ -140,36 +132,18 @@ bun install
 bun run build
 ```
 
-Then load this folder in Helium:
-
-```text
-extension/build/chrome-mv3-prod
-```
-
-After loading the extension, register the native host:
-
-```bash
-rvault browser enable
-```
-
-Do not load the top-level `extension/` folder. Helium must load the built `chrome-mv3-prod` folder.
+Load `extension/build/chrome-mv3-prod` through the browser's extension page. Do not load the top-level `extension/` directory.
 
 ### Troubleshooting Browser Integration
 
-If the extension says the native host is unavailable:
+If the extension says the native host is unavailable, disable and re-enable the same browser registration, then reload the extension:
 
 ```bash
-rvault browser disable
-rvault browser enable
+rvault browser disable --browser firefox
+rvault browser enable --browser firefox
 ```
 
-Then reload the extension in `chrome://extensions`.
-
-The extension ID is pinned by the manifest key. The expected Helium extension ID is:
-
-```text
-gnfmkmiklgghclejbbdmjgcldajahfhh
-```
+If the `rvault` binary moves after an update or reinstall, run the enable command again. The pinned Chromium extension ID is `gnfmkmiklgghclejbbdmjgcldajahfhh`.
 
 ## Quick Start
 
@@ -339,13 +313,13 @@ RVault is split into three Rust crates and one browser extension:
 - `rvault-core` handles config, keystore management, encryption, sessions, binary envelopes, backup, identity, export/import, storage, and clipboard integration.
 - `rvault-cli` builds the `rvault` binary, CLI commands, and native messaging host.
 - `rvault-tui` provides the terminal UI.
-- `extension` contains the Plasmo MV3 extension for Helium.
+- `extension` contains the Plasmo MV3 extension for Chromium-family browsers and Firefox.
 
 At setup time, RVault stores a master-password hash in the config directory and creates a local keystore file encrypted with a key derived from the master password.
 
 When the vault is unlocked, protected operations use the active session key instead of asking for the master password for every command.
 
-Browser integration uses Chrome-style native messaging. Helium launches `rvault` directly when the extension sends a native message. `rvault browser enable` only registers the native messaging manifest; it does not start a background daemon.
+Browser integration uses native messaging. Chromium-family browsers pass their extension origin to `rvault`; Firefox passes the fixed RVault add-on ID. `rvault browser enable` writes the browser-specific manifest or registry entry and does not start a background daemon.
 
 ## Build and Test From Source
 
@@ -371,22 +345,23 @@ cd extension
 bun install
 bun test
 bun run build
+bun run build:firefox
 ```
 
 Create a local extension ZIP:
 
 ```bash
 cd extension/build/chrome-mv3-prod
-zip -r ../../../rvault-extension-1.2.0.zip .
+zip -r ../../../rvault-extension-1.4.1.zip .
 ```
 
 The ZIP must contain `manifest.json` at the ZIP root.
 
 ## Release Checklist
 
-For `1.2.0`:
+For a release version `<version>`:
 
-1. Confirm versions are `1.2.0` in `Cargo.toml`, `Cargo.lock`, and `extension/package.json`.
+1. Confirm versions match in `Cargo.toml`, `Cargo.lock`, and `extension/package.json`.
 2. Run Rust checks:
 
 ```bash
@@ -402,21 +377,23 @@ cargo check
 cd extension
 bun test
 bun run build
+bun run build:firefox
 ```
 
-4. Tag and push the release:
+4. Configure the `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` repository secrets used to request an unlisted Mozilla signature for the Firefox XPI.
+
+5. Tag and push the release:
 
 ```bash
-./release-rvault 1.2.0
+./release-rvault <version>
 ```
 
-The cargo-dist release workflow builds the CLI installers. A separate extension release workflow builds and uploads `rvault-extension-1.2.0.zip` for local Helium installation after the GitHub Release exists.
+The cargo-dist release workflow builds the CLI installers. The extension release workflow uploads `rvault-extension-<version>.zip` for Chromium-family browsers and the Mozilla-signed `rvault-extension-firefox-<version>.xpi` after the GitHub Release exists.
 
 ## Current Boundaries
 
-- The browser extension is distributed locally for `1.2.0`; it is not published in the Chrome Web Store.
-- Browser native host registration targets Helium on macOS.
-- Firefox support is not included in this release.
+- The browser extension is distributed through GitHub Releases; it is not published in the Chrome Web Store or AMO.
+- Helium native host registration is macOS-only.
 - RVault does not provide hosted sync.
 - Export/import is encrypted recipient sharing, not plaintext export.
 - Backups are full recovery files and replace local RVault data on restore.

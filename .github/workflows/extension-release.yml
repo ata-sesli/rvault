@@ -18,12 +18,13 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - uses: oven-sh/setup-bun@v2
-      - name: Build Helium extension
+      - name: Build browser extensions
         working-directory: extension
         run: |
           bun install --frozen-lockfile
           bun run build
-      - name: Package Helium extension
+          bun run build:firefox
+      - name: Package Chromium extension
         shell: bash
         run: |
           VERSION="$(bun -e "const pkg = await import('./extension/package.json'); console.log(pkg.default.version)")"
@@ -32,9 +33,34 @@ jobs:
             echo "extension/package.json version $VERSION does not match tag $GITHUB_REF_NAME" >&2
             exit 1
           fi
-          ZIP_NAME="rvault-extension-${VERSION}.zip"
-          (cd extension/build/chrome-mv3-prod && zip -r "../../../${ZIP_NAME}" .)
-          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          CHROMIUM_ZIP="rvault-extension-${VERSION}.zip"
+          (cd extension/build/chrome-mv3-prod && zip -r "../../../${CHROMIUM_ZIP}" .)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "CHROMIUM_ZIP=${CHROMIUM_ZIP}" >> "$GITHUB_ENV"
+      - name: Sign Firefox extension
+        shell: bash
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [[ -z "$AMO_JWT_ISSUER" || -z "$AMO_JWT_SECRET" ]]; then
+            echo "AMO_JWT_ISSUER and AMO_JWT_SECRET are required to sign the Firefox extension" >&2
+            exit 1
+          fi
+          npx --yes web-ext@10.3.0 sign \
+            --source-dir extension/build/firefox-mv3-prod \
+            --artifacts-dir firefox-signed \
+            --channel unlisted \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET"
+          SIGNED_XPI="$(find firefox-signed -maxdepth 1 -name '*.xpi' -print -quit)"
+          if [[ -z "$SIGNED_XPI" ]]; then
+            echo "Mozilla signing completed without producing an XPI" >&2
+            exit 1
+          fi
+          FIREFOX_XPI="rvault-extension-firefox-${VERSION}.xpi"
+          mv "$SIGNED_XPI" "$FIREFOX_XPI"
+          echo "FIREFOX_XPI=${FIREFOX_XPI}" >> "$GITHUB_ENV"
       - name: Wait for cargo-dist release
         shell: bash
         run: |
@@ -46,5 +72,5 @@ jobs:
           done
           echo "Timed out waiting for GitHub Release $GITHUB_REF_NAME" >&2
           exit 1
-      - name: Upload extension ZIP
-        run: gh release upload "$GITHUB_REF_NAME" "$ZIP_NAME" --clobber
+      - name: Upload browser extensions
+        run: gh release upload "$GITHUB_REF_NAME" "$CHROMIUM_ZIP" "$FIREFOX_XPI" --clobber

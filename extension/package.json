@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
+    "build:firefox": "plasmo build --target=firefox-mv3",
+    "package:firefox": "plasmo package --target=firefox-mv3",
     "test": "bun test"
   },
   "dependencies": {
@@ -22,7 +24,11 @@
     "typescript": "^5.5.4"
   },
   "manifest": {
-    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxeqUqKARu/O10PNBTdVB+ZHHg2KdA0C8DQTw65gxodLMkhL3zFSCTRavtRpFq/glcI65wipR4+S+9bVy/B/JSEcLzEz1d15/8EDPxGSycu92xkxP7OK/eLU/hnJJjWYg9sDstuQFhiRixPpiPGwvYAgMMPhUbrX74Y5UjqRMhAmI982uugvUblp6SKx7EtXvYB0mJFztMsyxjRhYAnI5eEOjUskmDfODaWdYcSXmQApTCG1UQhTb+Gv/garaTV6YohdhEMGEdt939K93nttJOjzXcqQuCIuvdZJQADxDcNRaulEB0ZHzpKZLq61kQVWJc5YrPAdOGLKLnaCPJ+QldwIDAQAB",
+    "overrides": {
+      "chrome": {
+        "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxeqUqKARu/O10PNBTdVB+ZHHg2KdA0C8DQTw65gxodLMkhL3zFSCTRavtRpFq/glcI65wipR4+S+9bVy/B/JSEcLzEz1d15/8EDPxGSycu92xkxP7OK/eLU/hnJJjWYg9sDstuQFhiRixPpiPGwvYAgMMPhUbrX74Y5UjqRMhAmI982uugvUblp6SKx7EtXvYB0mJFztMsyxjRhYAnI5eEOjUskmDfODaWdYcSXmQApTCG1UQhTb+Gv/garaTV6YohdhEMGEdt939K93nttJOjzXcqQuCIuvdZJQADxDcNRaulEB0ZHzpKZLq61kQVWJc5YrPAdOGLKLnaCPJ+QldwIDAQAB"
+      }
+    },
     "permissions": [
       "nativeMessaging",
       "activeTab",
@@ -37,6 +43,16 @@
     "action": {
       "default_title": "RVault",
       "default_popup": "./popup.html"
+    },
+    "browser_specific_settings": {
+      "gecko": {
+        "id": "rvault@ata-sesli.github.io",
+        "data_collection_permissions": {
+          "required": [
+            "none"
+          ]
+        }
+      }
     }
   }
 }
