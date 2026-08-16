@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- Added browser-native-host setup for Chrome, Chromium, and Firefox while preserving Helium as the default.
+- Added Firefox Manifest V3 builds and Mozilla-signed XPI release artifacts.
+- Added browser-specific native messaging manifests across supported desktop platforms.
+
 ## 1.4.1
 
 - Fixed pasted secrets containing uppercase `Q` unexpectedly locking and closing the TUI.

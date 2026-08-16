@@ -2,7 +2,7 @@
 
 RVault is a local-first password manager written in Rust, with a terminal UI, a CLI, and a browser extension that talks to the local `rvault` binary through native messaging.
 
-Current version: `1.4.1`.
+Current version: `1.4.2`.
 
 RVault keeps storage local. Passwords are encrypted before they are written to SQLite, browser integration goes through a local native host, and the extension does not store plaintext credentials.
 
@@ -24,16 +24,16 @@ RVault keeps storage local. Passwords are encrypted before they are written to S
 
 ### From GitHub Releases
 
-Install the CLI from the `v1.4.1` release assets:
+Install the CLI from the `v1.4.2` release assets:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v1.4.1/rvault-cli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ata-sesli/rvault/releases/download/v1.4.2/rvault-cli-installer.sh | sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v1.4.1/rvault-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/ata-sesli/rvault/releases/download/v1.4.2/rvault-cli-installer.ps1 | iex"
 ```
 
 Confirm the install:
@@ -45,7 +45,7 @@ rvault --version
 Expected version:
 
 ```text
-rvault-cli 1.4.1
+rvault-cli 1.4.2
 ```
 
 ### From Source
@@ -352,7 +352,7 @@ Create a local extension ZIP:
 
 ```bash
 cd extension/build/chrome-mv3-prod
-zip -r ../../../rvault-extension-1.4.1.zip .
+zip -r ../../../rvault-extension-1.4.2.zip .
 ```
 
 The ZIP must contain `manifest.json` at the ZIP root.
